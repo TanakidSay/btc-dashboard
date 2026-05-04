@@ -40,6 +40,7 @@ class Settings:
     max_table_rows: int = 20
     max_chart_rows: int = 50
     fee_spike_threshold: float = 5
+    whale_alert_threshold_btc: float = 100
     price_breakout_lookback: int = 10
     notification_webhook_url: str | None = None
     notification_cooldown_seconds: int = 300
@@ -83,6 +84,7 @@ class Settings:
             cache_ttl_seconds=int(os.getenv("CACHE_TTL_SECONDS", "30")),
             node_block_count=int(os.getenv("NODE_BLOCK_COUNT", "10")),
             fee_spike_threshold=float(os.getenv("FEE_SPIKE_THRESHOLD", "5")),
+            whale_alert_threshold_btc=float(os.getenv("WHALE_ALERT_THRESHOLD_BTC", "100")),
             notification_webhook_url=os.getenv("NOTIFICATION_WEBHOOK_URL") or None,
             notification_cooldown_seconds=int(os.getenv("NOTIFICATION_COOLDOWN_SECONDS", "300")),
             start_worker=_bool_from_env(

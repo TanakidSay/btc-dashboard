@@ -40,7 +40,9 @@ SAFE_SECURITY_RISK = "low"
 BITCOIN_MAX_SUPPLY_BTC = 21_000_000
 SATOSHI_ESTIMATED_BTC = 1_100_000
 ETF_MAX_AGE_DAYS = 7
+SATS_PER_BTC = 100_000_000
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
+MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
 COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/flow-history"
 SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
@@ -1411,6 +1413,67 @@ def price_breakout_alert(prices: list[float], lookback: int) -> str | None:
     return None
 
 
+def get_recent_whale_transactions(settings: Settings) -> list[dict[str, Any]]:
+    return _cached("whale_transactions", settings, lambda: _get_recent_whale_transactions(settings))
+
+
+def _get_recent_whale_transactions(settings: Settings) -> list[dict[str, Any]]:
+    rows = _get_json(MEMPOOL_RECENT_TX_URL, settings)
+    if not isinstance(rows, list):
+        raise ValueError("recent mempool transaction response is not a list")
+    transactions = []
+    for row in rows:
+        value_btc = _transaction_value_btc(row)
+        if value_btc is None:
+            continue
+        transactions.append({
+            "txid": str(row.get("txid") or ""),
+            "value_btc": round(value_btc, 8),
+            "fee_sat": int(_first_number(row, ("fee",)) or 0),
+            "vsize": int(_first_number(row, ("vsize", "size")) or 0),
+        })
+    return sorted(transactions, key=lambda tx: tx["value_btc"], reverse=True)
+
+
+def _transaction_value_btc(row: dict[str, Any]) -> float | None:
+    value = _first_number(row, ("value", "output_value", "total_output", "totalOutput"))
+    if value is not None:
+        return float(value) / SATS_PER_BTC
+    outputs = row.get("vout") or row.get("outputs")
+    if isinstance(outputs, list):
+        total_sats = 0.0
+        for output in outputs:
+            amount = _first_number(output, ("value", "amount"))
+            if amount is not None:
+                total_sats += float(amount)
+        if total_sats > 0:
+            return total_sats / SATS_PER_BTC
+    return None
+
+
+def whale_transaction_alert(
+    transactions: list[dict[str, Any]],
+    threshold_btc: float,
+) -> dict[str, str] | None:
+    whales = [tx for tx in transactions if float(tx.get("value_btc", 0) or 0) >= threshold_btc]
+    if not whales:
+        return None
+    largest = max(whales, key=lambda tx: float(tx.get("value_btc", 0) or 0))
+    value_btc = float(largest.get("value_btc", 0) or 0)
+    txid = str(largest.get("txid") or "")
+    short_txid = f"{txid[:8]}...{txid[-8:]}" if len(txid) > 16 else txid
+    return {
+        "type": "whale_transaction",
+        "severity": "high" if value_btc >= threshold_btc * 2 else "medium",
+        "status": "red" if value_btc >= threshold_btc * 2 else "yellow",
+        "message": f"Whale Transaction: {value_btc:,.2f} BTC moved in mempool",
+        "action": f"Review transaction {short_txid}" if short_txid else "Monitor mempool activity",
+        "txid": txid,
+        "value_btc": f"{value_btc:.8f}",
+        "threshold_btc": f"{threshold_btc:.2f}",
+    }
+
+
 def fee_trend_alert(df: pd.DataFrame | None, hashrate: float | None) -> dict[str, str] | None:
     """Detect fee trends and combined signals with hashrate."""
     if df is None or len(df.index) < 5:
@@ -1481,6 +1544,8 @@ def build_alerts(
     fee_spike_threshold: float,
     price_breakout_lookback: int,
     hashrate: float | None = None,
+    whale_transactions: list[dict[str, Any]] | None = None,
+    whale_alert_threshold_btc: float = 100,
 ) -> list[dict[str, str]]:
     alerts: list[dict[str, str]] = []
 
@@ -1505,6 +1570,10 @@ def build_alerts(
     trend_alert = fee_trend_alert(df, hashrate)
     if trend_alert:
         alerts.append(trend_alert)
+
+    whale_alert = whale_transaction_alert(whale_transactions or [], whale_alert_threshold_btc)
+    if whale_alert:
+        alerts.append(whale_alert)
 
     return alerts
 

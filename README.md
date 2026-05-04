@@ -46,6 +46,8 @@ The latest worker-populated metrics are exposed at:
 
 Set `FEE_SPIKE_THRESHOLD` to control the sat/vB fee threshold. When the latest fee crosses from at or below the threshold to above it, the dashboard raises an in-app alert and the background worker sends one notification.
 
+Set `WHALE_ALERT_THRESHOLD_BTC` to control the mempool whale-transaction threshold. The dashboard checks recent public mempool transactions and raises an in-app alert when the largest recent transaction is at or above that BTC value. The default is `100`.
+
 Webhook notifications are enabled by setting:
 
 ```powershell

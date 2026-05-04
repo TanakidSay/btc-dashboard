@@ -10,6 +10,7 @@ from .services import (
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
     get_etf_flow,
+    get_recent_whale_transactions,
     get_security_overview,
     get_viewer_stats,
     record_view,
@@ -239,12 +240,19 @@ def api_alert():
     try:
         settings = _settings()
         data = snapshot()
+        try:
+            whale_transactions = get_recent_whale_transactions(settings)
+        except Exception as exc:
+            current_app.logger.warning("whale transaction lookup failed: %s", exc)
+            whale_transactions = []
         alerts = build_alerts(
             data["fee_data"],
             data["price_history"],
             fee_spike_threshold=settings.fee_spike_threshold,
             price_breakout_lookback=settings.price_breakout_lookback,
             hashrate=data["hashrate"],
+            whale_transactions=whale_transactions,
+            whale_alert_threshold_btc=settings.whale_alert_threshold_btc,
         )
         alert_text = " | ".join(alert["message"] for alert in alerts) if alerts else None
         return jsonify({"alert": alert_text, "alerts": alerts})

@@ -21,6 +21,7 @@ from btc_dashboard.services import (
     get_node_count,
     get_node_count_result,
     get_btc_treasury_holdings,
+    get_recent_whale_transactions,
     get_viewer_stats,
     _etf_date_is_recent,
     _extract_millions_flow,
@@ -30,6 +31,7 @@ from btc_dashboard.services import (
     _parse_farside_latest_rows,
     price_breakout_alert,
     record_view,
+    whale_transaction_alert,
 )
 
 
@@ -70,6 +72,61 @@ def test_build_alerts_detects_rising_fee_spike() -> None:
             "threshold": "5.00",
         }
     ]
+
+
+def test_whale_transaction_alert_detects_large_mempool_transaction() -> None:
+    alert = whale_transaction_alert(
+        [
+            {"txid": "a" * 64, "value_btc": 25},
+            {"txid": "b" * 64, "value_btc": 250.5},
+        ],
+        threshold_btc=100,
+    )
+
+    assert alert is not None
+    assert alert["type"] == "whale_transaction"
+    assert alert["severity"] == "high"
+    assert alert["status"] == "red"
+    assert alert["value_btc"] == "250.50000000"
+
+
+def test_build_alerts_includes_whale_transaction_alert() -> None:
+    alerts = build_alerts(
+        None,
+        prices=[],
+        fee_spike_threshold=5,
+        price_breakout_lookback=10,
+        whale_transactions=[{"txid": "abc", "value_btc": 120}],
+        whale_alert_threshold_btc=100,
+    )
+
+    assert alerts == [
+        {
+            "type": "whale_transaction",
+            "severity": "medium",
+            "status": "yellow",
+            "message": "Whale Transaction: 120.00 BTC moved in mempool",
+            "action": "Review transaction abc",
+            "txid": "abc",
+            "value_btc": "120.00000000",
+            "threshold_btc": "100.00",
+        }
+    ]
+
+
+def test_get_recent_whale_transactions_sorts_public_mempool_values(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse([
+            {"txid": "small", "value": 5_000_000_000, "fee": 1000, "vsize": 250},
+            {"txid": "large", "value": 15_000_000_000, "fee": 2000, "vsize": 300},
+        ])
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    transactions = get_recent_whale_transactions(_settings(tmp_path))
+
+    assert [tx["txid"] for tx in transactions] == ["large", "small"]
+    assert transactions[0]["value_btc"] == 150
 
 
 def test_fee_spike_alert_requires_threshold_crossing() -> None:
