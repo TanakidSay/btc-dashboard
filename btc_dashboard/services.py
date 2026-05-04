@@ -848,7 +848,7 @@ def _cached_resource(
             return cached
         fallback = deepcopy(safe_fallback)
         fallback["status"] = "error"
-        fallback["updated_at"] = None
+        fallback["updated_at"] = fallback.get("updated_at", "")
         fallback["error"] = str(exc)
         logger.info(fallback_log)
         return fallback

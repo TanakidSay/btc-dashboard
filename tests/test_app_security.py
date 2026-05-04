@@ -150,3 +150,29 @@ def test_security_route_never_returns_null_fields(monkeypatch, tmp_path) -> None
     assert body["double_spend"]["active_height"] == 0
     assert body["reorgs"]["current_height"] == 0
     assert body["updated_at"] == "2026-05-04T14:23:03Z"
+
+
+def test_etf_route_returns_empty_strings_for_missing_timestamps(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_etf_flow",
+        lambda settings: {
+            "latest_date": "",
+            "latest_net_flow_usd": 0,
+            "7d_flow": 0,
+            "trend": "neutral",
+            "flow_history": [],
+            "source": "fallback",
+            "updated_at": "",
+            "status": "error",
+            "error": "No fresh ETF flow source available",
+        },
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/etf")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["latest_date"] == ""
+    assert body["updated_at"] == ""
