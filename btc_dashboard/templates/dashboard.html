@@ -228,28 +228,28 @@
         {{ table|safe }}
     </section>
 
-    <aside class="mt-6 rounded-lg border border-amber-500/20 bg-gray-950/95 p-4 text-sm shadow-lg shadow-black/20 md:fixed md:bottom-4 md:right-4 md:z-40 md:mt-0 md:w-72" aria-label="Donation support">
-        <h2 class="text-sm font-semibold text-amber-300">☕ Support this dashboard</h2>
-        <p class="mt-1 text-xs leading-5 text-gray-400">Free Bitcoin dashboard. Tips help keep it running.</p>
+    <aside class="ml-auto mt-6 w-full max-w-60 rounded-lg border border-amber-500/20 bg-gray-950/95 p-3 text-xs shadow shadow-black/20" aria-label="Donation support">
+        <h2 class="text-xs font-semibold text-amber-300">☕ Support this dashboard</h2>
+        <p class="mt-1 leading-4 text-gray-400">Free Bitcoin dashboard. Tips help keep it running.</p>
 
-        <div class="mt-3 rounded-md border border-gray-800 bg-gray-900/80 p-3">
-            <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Lightning</p>
+        <div class="mt-2 rounded-md border border-gray-800 bg-gray-900/80 p-2">
+            <p class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Lightning</p>
             <img
                 id="lightningQrImage"
-                class="hidden h-28 w-28 rounded-md border border-gray-800 bg-white p-1"
+                class="hidden h-20 w-20 rounded-md border border-gray-800 bg-white p-1"
                 src="{{ url_for('static', filename='lightning-qr.png') }}"
                 alt="Lightning donation QR"
             >
-            <p id="lightningQrFallback" class="text-xs text-gray-500">Lightning QR coming soon</p>
+            <p id="lightningQrFallback" class="text-[11px] text-gray-500">Lightning QR coming soon</p>
         </div>
 
-        <div class="mt-3 rounded-md border border-gray-800 bg-gray-900/80 p-3">
-            <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">BTC address</p>
-            <p id="btcDonationAddress" class="break-all text-xs font-medium text-gray-200">1NhjUqDC7f1XAqziwUuhgAtV5pRxK2Zrya</p>
+        <div class="mt-2 rounded-md border border-gray-800 bg-gray-900/80 p-2">
+            <p class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">BTC address</p>
+            <p id="btcDonationAddress" class="break-all text-[11px] font-medium text-gray-200">1NhjUqDC7f1XAqziwUuhgAtV5pRxK2Zrya</p>
             <button
                 id="copyBtcDonationAddress"
                 type="button"
-                class="mt-2 min-h-10 rounded-md border border-amber-500/30 bg-gray-950 px-3 py-2 text-xs font-semibold text-amber-100 hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                class="mt-2 rounded-md border border-amber-500/30 bg-gray-950 px-2 py-1.5 text-[11px] font-semibold text-amber-100 hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
                 data-copy-target="btcDonationAddress"
             >
                 Copy
@@ -257,7 +257,7 @@
         </div>
     </aside>
 
-    <footer class="mt-8 border-t border-gray-800 pt-5 text-center text-sm text-gray-500 md:pb-32">
+    <footer class="mt-8 border-t border-gray-800 pt-5 text-center text-sm text-gray-500">
         <p class="font-medium text-gray-400">Built by an independent Bitcoiner</p>
         <p class="mt-1 text-xs">Powered by Bitcoin open data</p>
     </footer>
