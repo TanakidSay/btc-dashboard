@@ -24,6 +24,17 @@ session = requests.Session()
 logger = logging.getLogger(__name__)
 
 API_HEADERS = {"Accept": "application/json", "User-Agent": "btc-dashboard/0.1"}
+BROWSER_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
 FALLBACK_NODE_COUNT = "N/A"
 SAFE_SECURITY_RISK = "low"
 BITCOIN_MAX_SUPPLY_BTC = 21_000_000
@@ -344,6 +355,12 @@ def _get_json_with_headers_retry(
 
 def _get_text(url: str, settings: Settings) -> str:
     response = session.get(url, headers=API_HEADERS, timeout=settings.request_timeout)
+    response.raise_for_status()
+    return response.text.strip()
+
+
+def _get_browser_text(url: str, settings: Settings) -> str:
+    response = session.get(url, headers=BROWSER_HEADERS, timeout=settings.request_timeout)
     response.raise_for_status()
     return response.text.strip()
 
@@ -680,7 +697,7 @@ def _get_etf_flow_from_coinglass(settings: Settings) -> dict[str, Any]:
 
 def _get_etf_flow_from_farside(settings: Settings) -> dict[str, Any]:
     try:
-        html = _get_text(FARSIDE_BTC_ETF_FLOW_URL, settings)
+        html = _get_browser_text(FARSIDE_BTC_ETF_FLOW_URL, settings)
         rows = _parse_farside_etf_rows(html) or _parse_farside_etf_rows_from_text(html)
         if not rows:
             raise ValueError("Farside ETF flow table has no parsable rows")
@@ -694,8 +711,8 @@ def _get_etf_flow_from_farside(settings: Settings) -> dict[str, Any]:
 
 def _get_etf_flow_from_farside_latest(settings: Settings) -> dict[str, Any]:
     try:
-        html = _get_text(FARSIDE_BTC_ETF_LATEST_URL, settings)
-        rows = _parse_farside_etf_rows(html) or _parse_farside_etf_rows_from_text(html)
+        html = _get_browser_text(FARSIDE_BTC_ETF_LATEST_URL, settings)
+        rows = _parse_farside_latest_rows(html) or _parse_farside_etf_rows(html)
         if not rows:
             raise ValueError("Farside latest ETF page has no parsable rows")
         return _normalize_etf_payload(rows[-30:], "farside-latest")
@@ -858,6 +875,25 @@ def _parse_farside_etf_rows_from_text(text: str) -> list[dict[str, Any]]:
             "close_price": None,
         })
     return parsed_rows
+
+
+def _parse_farside_latest_rows(html: str) -> list[dict[str, Any]]:
+    text = _clean_page_text(html)
+    pattern = re.compile(
+        r"(\d{2}\s+[A-Z][a-z]{2}\s+\d{4})\s+"
+        r"([()0-9.,-]+)(?=\s+[()0-9.,-]+|\s+\d{2}\s+[A-Z][a-z]{2}\s+\d{4}|\s+Total|\s+Average)",
+    )
+    rows = []
+    for match in pattern.finditer(text):
+        total_millions = _parse_farside_number(match.group(2))
+        if total_millions is None:
+            continue
+        rows.append({
+            "date": match.group(1),
+            "net_flow_usd": total_millions * 1_000_000,
+            "close_price": 0,
+        })
+    return rows
 
 
 def _clean_page_text(value: str) -> str:

@@ -27,6 +27,7 @@ from btc_dashboard.services import (
     _extract_walletpilot_date,
     _extract_globalcoinguide_date,
     _parse_farside_etf_rows_from_text,
+    _parse_farside_latest_rows,
     price_breakout_alert,
     record_view,
 )
@@ -433,6 +434,17 @@ def test_parse_farside_etf_rows_from_text_handles_pipe_rows() -> None:
     ]
 
 
+def test_parse_farside_latest_rows_uses_first_total_value_and_skips_pending_rows() -> None:
+    rows = _parse_farside_latest_rows(
+        "01 May 2026 284.4 213.4 27.3 88.5 0.0 629.8 "
+        "04 May 2026 - - - - - - 0.0 Total 65,502"
+    )
+
+    assert rows == [
+        {"date": "01 May 2026", "net_flow_usd": 284_400_000.0, "close_price": 0},
+    ]
+
+
 def test_extract_etf_scrape_values_from_public_pages() -> None:
     walletpilot_text = (
         "Holdings as of market close: 03 May 2026 "
@@ -530,7 +542,7 @@ def test_get_hashrate_chart_points_normalizes_mempool_history(monkeypatch, tmp_p
 def test_get_etf_flow_uses_farside_latest_text_fallback(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
         if "farside.co.uk/btc/" in url:
-            return FakeResponse(text="03 May 2026 | 181.9 | 147.3 | 3.8 | 118.8 | 471.4")
+            return FakeResponse(text="03 May 2026 181.9 147.3 3.8 118.8 471.4")
         if "farside.co.uk/bitcoin-etf-flow-all-data/" in url:
             return FakeResponse(text="")
         return FakeResponse(status_code=503)
@@ -542,7 +554,7 @@ def test_get_etf_flow_uses_farside_latest_text_fallback(monkeypatch, tmp_path) -
 
     assert payload["source"] == "farside-latest"
     assert payload["latest_date"] == "03 May 2026"
-    assert payload["latest_net_flow_usd"] == 471_400_000.0
+    assert payload["latest_net_flow_usd"] == 181_900_000.0
     assert payload["trend"] == "inflow"
 
 
