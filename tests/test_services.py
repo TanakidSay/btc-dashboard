@@ -523,6 +523,38 @@ def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path
     assert payload["7d_flow"] == 2_100_000_000.0
 
 
+def test_get_etf_flow_uses_recent_seeded_fallback_when_live_sources_fail(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "seeded-fallback"
+    assert payload["status"] == "stale"
+    assert payload["latest_date"] == "01 May 2026"
+    assert payload["latest_net_flow_usd"] == 118_900_000.0
+    assert payload["7d_flow"] == 543_000_000.0
+    assert payload["flow_history"][0]["close_price"] == 0
+
+
+def test_get_etf_flow_rejects_seeded_fallback_when_seed_is_too_old(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 20, tzinfo=UTC))
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "fallback"
+    assert payload["status"] == "error"
+    assert payload["latest_date"] == ""
+    assert "No fresh ETF flow source available" in payload["error"]
+
+
 def test_get_hashrate_chart_points_normalizes_mempool_history(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
         return FakeResponse({
