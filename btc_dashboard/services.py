@@ -33,6 +33,8 @@ COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/
 SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
 FARSIDE_BTC_ETF_LATEST_URL = "https://farside.co.uk/btc/"
+WALLETPILOT_BTC_ETF_URL = "https://www.walletpilot.com/bitcoin-tracker/etfs"
+GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flows"
 COINGECKO_TREASURY_URLS = (
     "https://api.coingecko.com/api/v3/entities/public_treasury/bitcoin",
     "https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin",
@@ -610,6 +612,10 @@ def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
         farside_data = loader(settings)
         if farside_data["source"] != "fallback":
             return farside_data
+    for loader in (_get_etf_flow_from_walletpilot, _get_etf_flow_from_globalcoinguide):
+        fallback_data = loader(settings)
+        if fallback_data["source"] != "fallback":
+            return fallback_data
     raise ValueError("No fresh ETF flow source available")
 
 
@@ -699,6 +705,56 @@ def _get_etf_flow_from_farside_latest(settings: Settings) -> dict[str, Any]:
         return fallback
 
 
+def _get_etf_flow_from_walletpilot(settings: Settings) -> dict[str, Any]:
+    try:
+        html = _get_text(WALLETPILOT_BTC_ETF_URL, settings)
+        text = _clean_page_text(html)
+        latest_date = _extract_walletpilot_date(text)
+        latest_flow = _extract_millions_flow(text, "1-Day Net Flows")
+        seven_day_flow = _extract_millions_flow(text, "7-Day Net Flows")
+        if latest_flow is None and seven_day_flow is None:
+            raise ValueError("WalletPilot ETF page has no parsable flow values")
+        history = [{
+            "date": latest_date or _utc_now_iso().split("T", 1)[0],
+            "net_flow_usd": latest_flow if latest_flow is not None else 0,
+            "close_price": None,
+        }]
+        payload = _normalize_etf_payload(history, "walletpilot")
+        payload["7d_flow"] = seven_day_flow if seven_day_flow is not None else payload["7d_flow"]
+        payload["latest_date"] = latest_date or payload["latest_date"]
+        return payload
+    except Exception as exc:
+        logger.warning("WalletPilot ETF flow request failed: %s", exc)
+        fallback = FALLBACK_ETF_FLOW.copy()
+        fallback["error"] = str(exc)
+        return fallback
+
+
+def _get_etf_flow_from_globalcoinguide(settings: Settings) -> dict[str, Any]:
+    try:
+        html = _get_text(GLOBALCOINGUIDE_BTC_ETF_URL, settings)
+        text = _clean_page_text(html)
+        latest_date = _extract_globalcoinguide_date(text)
+        latest_flow = _extract_millions_flow(text, "Today's Net Flow")
+        seven_day_flow = _extract_millions_flow(text, "Weekly Net Flow")
+        if latest_flow is None and seven_day_flow is None:
+            raise ValueError("GlobalCoinGuide ETF page has no parsable flow values")
+        history = [{
+            "date": latest_date or _utc_now_iso().split("T", 1)[0],
+            "net_flow_usd": latest_flow if latest_flow is not None else 0,
+            "close_price": None,
+        }]
+        payload = _normalize_etf_payload(history, "globalcoinguide")
+        payload["7d_flow"] = seven_day_flow if seven_day_flow is not None else payload["7d_flow"]
+        payload["latest_date"] = latest_date or payload["latest_date"]
+        return payload
+    except Exception as exc:
+        logger.warning("GlobalCoinGuide ETF flow request failed: %s", exc)
+        fallback = FALLBACK_ETF_FLOW.copy()
+        fallback["error"] = str(exc)
+        return fallback
+
+
 def _normalize_etf_payload(history: list[dict[str, Any]], source: str) -> dict[str, Any]:
     if not history:
         raise ValueError("ETF history is empty")
@@ -764,6 +820,50 @@ def _parse_farside_etf_rows_from_text(text: str) -> list[dict[str, Any]]:
             "close_price": None,
         })
     return parsed_rows
+
+
+def _clean_page_text(value: str) -> str:
+    value = re.sub(r"<script[^>]*>.*?</script>", " ", value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r"<style[^>]*>.*?</style>", " ", value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = unescape(value).replace("\xa0", " ")
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _extract_walletpilot_date(text: str) -> str:
+    match = re.search(r"Holdings as of market close:\s*([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})", text)
+    return match.group(1) if match else ""
+
+
+def _extract_globalcoinguide_date(text: str) -> str:
+    match = re.search(r"Last updated:\s*([A-Za-z]{3}\s+[0-9]{1,2}(?:,\s*[0-9]{4})?)", text)
+    return match.group(1) if match else ""
+
+
+def _extract_millions_flow(text: str, label: str) -> float | None:
+    pattern = rf"{re.escape(label)}\s*([+\-]?\$[0-9,]+(?:\.[0-9]+)?[MB])"
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return _parse_abbreviated_usd(match.group(1))
+
+
+def _parse_abbreviated_usd(value: str) -> float | None:
+    cleaned = value.strip().replace(",", "").replace("$", "")
+    sign = -1 if cleaned.startswith("-") else 1
+    cleaned = cleaned.lstrip("+-")
+    if cleaned.endswith("B"):
+        multiplier = 1_000_000_000
+        cleaned = cleaned[:-1]
+    elif cleaned.endswith("M"):
+        multiplier = 1_000_000
+        cleaned = cleaned[:-1]
+    else:
+        return None
+    try:
+        return float(cleaned) * multiplier * sign
+    except ValueError:
+        return None
 
 
 def _normalize_timestamp(value: Any) -> str:

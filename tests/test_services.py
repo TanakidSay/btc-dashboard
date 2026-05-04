@@ -20,6 +20,9 @@ from btc_dashboard.services import (
     get_node_count_result,
     get_btc_treasury_holdings,
     get_viewer_stats,
+    _extract_millions_flow,
+    _extract_walletpilot_date,
+    _extract_globalcoinguide_date,
     _parse_farside_etf_rows_from_text,
     price_breakout_alert,
     record_view,
@@ -425,6 +428,72 @@ def test_parse_farside_etf_rows_from_text_handles_pipe_rows() -> None:
         {"date": "06 Apr 2026", "net_flow_usd": 471_400_000.0, "close_price": None},
         {"date": "07 Apr 2026", "net_flow_usd": -10_000_000.0, "close_price": None},
     ]
+
+
+def test_extract_etf_scrape_values_from_public_pages() -> None:
+    walletpilot_text = (
+        "Holdings as of market close: 14 April 2026 "
+        "1-Day Net Flows +$411M 7-Day Net Flows +$573M"
+    )
+    globalcoinguide_text = (
+        "Today's Net Flow +$342.0M Last updated: Mar 14 "
+        "Weekly Net Flow +$2.10B 7-day cumulative"
+    )
+
+    assert _extract_walletpilot_date(walletpilot_text) == "14 April 2026"
+    assert _extract_globalcoinguide_date(globalcoinguide_text) == "Mar 14"
+    assert _extract_millions_flow(walletpilot_text, "1-Day Net Flows") == 411_000_000.0
+    assert _extract_millions_flow(walletpilot_text, "7-Day Net Flows") == 573_000_000.0
+    assert _extract_millions_flow(globalcoinguide_text, "Today's Net Flow") == 342_000_000.0
+    assert _extract_millions_flow(globalcoinguide_text, "Weekly Net Flow") == 2_100_000_000.0
+
+
+def test_get_etf_flow_uses_walletpilot_public_fallback(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk" in url:
+            return FakeResponse(status_code=403)
+        if "walletpilot.com/bitcoin-tracker/etfs" in url:
+            return FakeResponse(
+                text=(
+                    "<div>Holdings as of market close: 14 April 2026</div>"
+                    "<div>1-Day Net Flows +$411M</div>"
+                    "<div>7-Day Net Flows +$573M</div>"
+                )
+            )
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "walletpilot"
+    assert payload["latest_date"] == "14 April 2026"
+    assert payload["latest_net_flow_usd"] == 411_000_000.0
+    assert payload["7d_flow"] == 573_000_000.0
+
+
+def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk" in url or "walletpilot.com/bitcoin-tracker/etfs" in url:
+            return FakeResponse(status_code=403)
+        if "globalcoinguide.com/research/data/etf-flows" in url:
+            return FakeResponse(
+                text=(
+                    "<div>Today's Net Flow +$342.0M</div>"
+                    "<div>Last updated: Mar 14</div>"
+                    "<div>Weekly Net Flow +$2.10B</div>"
+                )
+            )
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "globalcoinguide"
+    assert payload["latest_date"] == "Mar 14"
+    assert payload["latest_net_flow_usd"] == 342_000_000.0
+    assert payload["7d_flow"] == 2_100_000_000.0
 
 
 def test_get_hashrate_chart_points_normalizes_mempool_history(monkeypatch, tmp_path) -> None:
