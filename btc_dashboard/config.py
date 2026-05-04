@@ -24,6 +24,7 @@ def _bool_from_env(name: str, default: bool) -> bool:
 class Settings:
     secret_key: str
     fee_csv_path: Path
+    viewer_stats_path: Path = BASE_DIR / "data/viewer_stats.json"
     dashboard_username: str | None = None
     dashboard_password: str | None = None
     dashboard_api_token: str | None = None
@@ -61,10 +62,14 @@ class Settings:
         csv_path = Path(os.getenv("BITCOIN_FEE_CSV", "data/bitcoin_fee_data.csv"))
         if not csv_path.is_absolute():
             csv_path = BASE_DIR / csv_path
+        viewer_stats_path = Path(os.getenv("VIEWER_STATS_FILE", "data/viewer_stats.json"))
+        if not viewer_stats_path.is_absolute():
+            viewer_stats_path = BASE_DIR / viewer_stats_path
 
         return cls(
             secret_key=os.getenv("SECRET_KEY", "dev-only-change-me"),
             fee_csv_path=csv_path,
+            viewer_stats_path=viewer_stats_path,
             dashboard_username=os.getenv("DASHBOARD_USERNAME") or None,
             dashboard_password=os.getenv("DASHBOARD_PASSWORD") or None,
             dashboard_api_token=os.getenv("DASHBOARD_API_TOKEN") or None,

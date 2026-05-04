@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
-from flask import Blueprint, current_app, jsonify, render_template
+from flask import Blueprint, current_app, jsonify, render_template, request
 
 from .config import Settings
 from .services import (
@@ -10,6 +10,8 @@ from .services import (
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
     get_etf_flow,
+    get_viewer_stats,
+    record_view,
     snapshot,
 )
 
@@ -22,6 +24,11 @@ def _settings() -> Settings:
 
 @api.route("/")
 def index():
+    record_view(
+        _settings(),
+        request.headers.get("X-Forwarded-For", request.remote_addr),
+        request.headers.get("User-Agent"),
+    )
     data = snapshot()
     return render_template("dashboard.html", table=data["table_html"])
 
@@ -195,6 +202,19 @@ def api_metrics():
         "nodes": data["node_count"] if data["node_count"] else "N/A",
         "time": data["time_labels"][-1] if data["time_labels"] else None,
     })
+
+
+@api.route("/api/viewers")
+def api_viewers():
+    try:
+        return jsonify(get_viewer_stats(_settings()))
+    except Exception as exc:
+        current_app.logger.exception("/api/viewers failed: %s", exc)
+        return jsonify({
+            "total_views": 0,
+            "unique_visitors": 0,
+            "last_viewed_at": None,
+        })
 
 
 @api.route("/api/alert")

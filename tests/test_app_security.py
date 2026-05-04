@@ -10,6 +10,7 @@ def _settings(tmp_path, **overrides) -> Settings:
     values = {
         "secret_key": "test-secret",
         "fee_csv_path": tmp_path / "fees.csv",
+        "viewer_stats_path": tmp_path / "viewer_stats.json",
         "start_worker": False,
     }
     values.update(overrides)
@@ -91,3 +92,15 @@ def test_health_alias_stays_public_when_auth_is_enabled(monkeypatch, tmp_path) -
     response = app.test_client().get("/health")
 
     assert response.status_code == 200
+
+
+def test_index_records_viewer_stats(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/", headers={"User-Agent": "pytest-browser"})
+
+    assert response.status_code == 200
+    viewer_response = app.test_client().get("/api/viewers")
+    assert viewer_response.status_code == 200
+    assert viewer_response.get_json()["total_views"] == 1

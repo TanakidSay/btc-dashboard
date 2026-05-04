@@ -68,6 +68,12 @@ function formatFlowDate(value) {
     return String(value);
 }
 
+function formatDateTime(value) {
+    if (!value) return "N/A";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
 function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
@@ -342,6 +348,20 @@ async function updateNetwork() {
         console.error("Failed to update network data", error);
         document.getElementById("hashrate").innerText = "N/A";
         document.getElementById("nodes").innerText = "N/A";
+    }
+}
+
+async function updateViewers() {
+    try {
+        const data = await fetchJson("/api/viewers");
+        document.getElementById("viewerTotal").innerText = valueOrNA(data.total_views);
+        document.getElementById("viewerUnique").innerText = valueOrNA(data.unique_visitors);
+        document.getElementById("viewerLastSeen").innerText = formatDateTime(data.last_viewed_at);
+    } catch (error) {
+        console.error("Failed to update viewer stats", error);
+        document.getElementById("viewerTotal").innerText = "N/A";
+        document.getElementById("viewerUnique").innerText = "N/A";
+        document.getElementById("viewerLastSeen").innerText = "N/A";
     }
 }
 
@@ -623,6 +643,7 @@ async function refreshDashboard() {
         updateTxChart(),
         updateHashChart(),
         updateNetwork(),
+        updateViewers(),
         updateInstitutionalMetrics(),
         updateSupplyOwnership(),
         updateAlert(),
@@ -640,6 +661,7 @@ async function initDashboard() {
         initEtfFlowChart(),
         initSupplyOwnershipChart(),
         updateNetwork(),
+        updateViewers(),
         updateAlert(),
         updateSecurity(),
         updateFeeRecommendation(),

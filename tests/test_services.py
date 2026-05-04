@@ -16,7 +16,9 @@ from btc_dashboard.services import (
     get_hashrate_result,
     get_node_count,
     get_node_count_result,
+    get_viewer_stats,
     price_breakout_alert,
+    record_view,
 )
 
 
@@ -97,11 +99,36 @@ def _settings(tmp_path) -> Settings:
     return Settings(
         secret_key="test",
         fee_csv_path=tmp_path / "fees.csv",
+        viewer_stats_path=tmp_path / "viewer_stats.json",
         start_worker=False,
         bitcoin_rpc_password="test",
         cache_ttl_seconds=30,
         node_block_count=2,
     )
+
+
+def test_record_view_updates_total_and_unique_counts(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    first = record_view(settings, "127.0.0.1", "BrowserA")
+    second = record_view(settings, "127.0.0.1", "BrowserA")
+    third = record_view(settings, "127.0.0.2", "BrowserB")
+
+    assert first["total_views"] == 1
+    assert second["total_views"] == 2
+    assert third["total_views"] == 3
+    assert third["unique_visitors"] == 2
+    assert third["last_viewed_at"] is not None
+
+
+def test_get_viewer_stats_returns_zeroes_when_file_is_missing(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    assert get_viewer_stats(settings) == {
+        "total_views": 0,
+        "unique_visitors": 0,
+        "last_viewed_at": None,
+    }
 
 
 def test_get_btc_price_uses_mempool(monkeypatch, tmp_path) -> None:

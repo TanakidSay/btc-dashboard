@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 import time
@@ -80,6 +82,12 @@ FALLBACK_SUPPLY_OWNERSHIP = {
     "source": "fallback",
     "note": "Bitcoin addresses are pseudonymous, so owner attribution is estimated.",
 }
+DEFAULT_VIEWER_STATS = {
+    "total_views": 0,
+    "unique_visitors": 0,
+    "last_viewed_at": None,
+    "known_visitors": [],
+}
 
 
 class DataSourceError(RuntimeError):
@@ -116,6 +124,7 @@ class DashboardState:
 state = DashboardState()
 _cache: dict[str, CacheEntry] = {}
 _cache_lock = Lock()
+_viewer_lock = Lock()
 
 
 def configure_state(settings: Settings) -> None:
@@ -130,6 +139,71 @@ def load_fee_data(path: Path, max_rows: int) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=["height", "tx_count", "total_fee_btc", "sat_per_vbyte"])
     return pd.read_csv(path).tail(max_rows)
+
+
+def get_viewer_stats(settings: Settings) -> dict[str, Any]:
+    with _viewer_lock:
+        stats = _load_viewer_stats(settings.viewer_stats_path)
+    return _public_viewer_stats(stats)
+
+
+def record_view(
+    settings: Settings,
+    remote_addr: str | None,
+    user_agent: str | None,
+) -> dict[str, Any]:
+    visitor_key = _viewer_key(remote_addr, user_agent)
+    with _viewer_lock:
+        stats = _load_viewer_stats(settings.viewer_stats_path)
+        stats["total_views"] += 1
+        if visitor_key not in stats["known_visitors"]:
+            stats["known_visitors"].append(visitor_key)
+        stats["unique_visitors"] = len(stats["known_visitors"])
+        stats["last_viewed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _save_viewer_stats(settings.viewer_stats_path, stats)
+    return _public_viewer_stats(stats)
+
+
+def _viewer_key(remote_addr: str | None, user_agent: str | None) -> str:
+    fingerprint = f"{remote_addr or 'unknown'}|{user_agent or 'unknown'}"
+    return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
+
+
+def _load_viewer_stats(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return _default_viewer_stats()
+    try:
+        stats = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _default_viewer_stats()
+    merged = _default_viewer_stats()
+    merged.update(stats)
+    if not isinstance(merged["known_visitors"], list):
+        merged["known_visitors"] = []
+    merged["unique_visitors"] = len(merged["known_visitors"])
+    return merged
+
+
+def _save_viewer_stats(path: Path, stats: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
+
+
+def _public_viewer_stats(stats: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "total_views": stats["total_views"],
+        "unique_visitors": stats["unique_visitors"],
+        "last_viewed_at": stats["last_viewed_at"],
+    }
+
+
+def _default_viewer_stats() -> dict[str, Any]:
+    return {
+        "total_views": 0,
+        "unique_visitors": 0,
+        "last_viewed_at": None,
+        "known_visitors": [],
+    }
 
 
 def format_fee_value(value: float) -> str:
