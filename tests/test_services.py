@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pandas as pd
 import requests
 
@@ -20,6 +22,7 @@ from btc_dashboard.services import (
     get_node_count_result,
     get_btc_treasury_holdings,
     get_viewer_stats,
+    _etf_date_is_recent,
     _extract_millions_flow,
     _extract_walletpilot_date,
     _extract_globalcoinguide_date,
@@ -432,20 +435,28 @@ def test_parse_farside_etf_rows_from_text_handles_pipe_rows() -> None:
 
 def test_extract_etf_scrape_values_from_public_pages() -> None:
     walletpilot_text = (
-        "Holdings as of market close: 14 April 2026 "
+        "Holdings as of market close: 03 May 2026 "
         "1-Day Net Flows +$411M 7-Day Net Flows +$573M"
     )
     globalcoinguide_text = (
-        "Today's Net Flow +$342.0M Last updated: Mar 14 "
+        "Today's Net Flow +$342.0M Last updated: May 03 "
         "Weekly Net Flow +$2.10B 7-day cumulative"
     )
 
-    assert _extract_walletpilot_date(walletpilot_text) == "14 April 2026"
-    assert _extract_globalcoinguide_date(globalcoinguide_text) == "Mar 14"
+    assert _extract_walletpilot_date(walletpilot_text) == "03 May 2026"
+    assert _extract_globalcoinguide_date(globalcoinguide_text) == "May 03"
     assert _extract_millions_flow(walletpilot_text, "1-Day Net Flows") == 411_000_000.0
     assert _extract_millions_flow(walletpilot_text, "7-Day Net Flows") == 573_000_000.0
     assert _extract_millions_flow(globalcoinguide_text, "Today's Net Flow") == 342_000_000.0
     assert _extract_millions_flow(globalcoinguide_text, "Weekly Net Flow") == 2_100_000_000.0
+
+
+def test_etf_date_freshness_rejects_stale_scrape_dates(monkeypatch) -> None:
+    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
+
+    assert _etf_date_is_recent("May 03")
+    assert _etf_date_is_recent("02 May 2026")
+    assert not _etf_date_is_recent("Mar 14")
 
 
 def test_get_etf_flow_uses_walletpilot_public_fallback(monkeypatch, tmp_path) -> None:
@@ -455,7 +466,7 @@ def test_get_etf_flow_uses_walletpilot_public_fallback(monkeypatch, tmp_path) ->
         if "walletpilot.com/bitcoin-tracker/etfs" in url:
             return FakeResponse(
                 text=(
-                    "<div>Holdings as of market close: 14 April 2026</div>"
+                    "<div>Holdings as of market close: 03 May 2026</div>"
                     "<div>1-Day Net Flows +$411M</div>"
                     "<div>7-Day Net Flows +$573M</div>"
                 )
@@ -463,13 +474,15 @@ def test_get_etf_flow_uses_walletpilot_public_fallback(monkeypatch, tmp_path) ->
         return FakeResponse(status_code=503)
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
 
     payload = get_etf_flow(_settings(tmp_path))
 
     assert payload["source"] == "walletpilot"
-    assert payload["latest_date"] == "14 April 2026"
+    assert payload["latest_date"] == "03 May 2026"
     assert payload["latest_net_flow_usd"] == 411_000_000.0
     assert payload["7d_flow"] == 573_000_000.0
+    assert payload["flow_history"][0]["close_price"] == 0
 
 
 def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path) -> None:
@@ -480,18 +493,19 @@ def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path
             return FakeResponse(
                 text=(
                     "<div>Today's Net Flow +$342.0M</div>"
-                    "<div>Last updated: Mar 14</div>"
+                    "<div>Last updated: May 03</div>"
                     "<div>Weekly Net Flow +$2.10B</div>"
                 )
             )
         return FakeResponse(status_code=503)
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
 
     payload = get_etf_flow(_settings(tmp_path))
 
     assert payload["source"] == "globalcoinguide"
-    assert payload["latest_date"] == "Mar 14"
+    assert payload["latest_date"] == "May 03"
     assert payload["latest_net_flow_usd"] == 342_000_000.0
     assert payload["7d_flow"] == 2_100_000_000.0
 
@@ -516,17 +530,18 @@ def test_get_hashrate_chart_points_normalizes_mempool_history(monkeypatch, tmp_p
 def test_get_etf_flow_uses_farside_latest_text_fallback(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
         if "farside.co.uk/btc/" in url:
-            return FakeResponse(text="06 Apr 2026 | 181.9 | 147.3 | 3.8 | 118.8 | 471.4")
+            return FakeResponse(text="03 May 2026 | 181.9 | 147.3 | 3.8 | 118.8 | 471.4")
         if "farside.co.uk/bitcoin-etf-flow-all-data/" in url:
             return FakeResponse(text="")
         return FakeResponse(status_code=503)
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
 
     payload = get_etf_flow(_settings(tmp_path))
 
     assert payload["source"] == "farside-latest"
-    assert payload["latest_date"] == "06 Apr 2026"
+    assert payload["latest_date"] == "03 May 2026"
     assert payload["latest_net_flow_usd"] == 471_400_000.0
     assert payload["trend"] == "inflow"
 
@@ -538,18 +553,19 @@ def test_get_etf_flow_uses_sosovalue_when_api_key_is_set(monkeypatch, tmp_path) 
             "msg": None,
             "data": {
                 "list": [
-                    {"date": "2026-04-06", "totalNetInflow": 100000000.0},
-                    {"date": "2026-04-07", "totalNetInflow": -25000000.0},
+                    {"date": "2026-05-02", "totalNetInflow": 100000000.0},
+                    {"date": "2026-05-03", "totalNetInflow": -25000000.0},
                 ]
             },
         })
 
     monkeypatch.setattr("btc_dashboard.services.session.post", fake_post)
+    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
 
     payload = get_etf_flow(_settings(tmp_path, sosovalue_api_key="test-key"))
 
     assert payload["source"] == "sosovalue"
-    assert payload["latest_date"] == "2026-04-07"
+    assert payload["latest_date"] == "2026-05-03"
     assert payload["latest_net_flow_usd"] == -25_000_000.0
     assert payload["7d_flow"] == 75_000_000.0
     assert payload["trend"] == "outflow"

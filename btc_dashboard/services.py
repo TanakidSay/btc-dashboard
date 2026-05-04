@@ -28,6 +28,7 @@ FALLBACK_NODE_COUNT = "N/A"
 SAFE_SECURITY_RISK = "low"
 BITCOIN_MAX_SUPPLY_BTC = 21_000_000
 SATOSHI_ESTIMATED_BTC = 1_100_000
+ETF_MAX_AGE_DAYS = 3
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/flow-history"
 SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
@@ -760,9 +761,19 @@ def _normalize_etf_payload(history: list[dict[str, Any]], source: str) -> dict[s
         raise ValueError("ETF history is empty")
     history = sorted(history, key=lambda row: str(row.get("date", "")))
     latest_row = history[-1]
-    latest_flow = latest_row.get("net_flow_usd", 0) or 0
-    latest_date = latest_row.get("date")
-    recent_rows = history[-7:]
+    latest_flow = float(latest_row.get("net_flow_usd", 0) or 0)
+    latest_date = str(latest_row.get("date") or "")
+    if not _etf_date_is_recent(latest_date):
+        raise ValueError(f"ETF data is stale: {latest_date}")
+    normalized_history = [
+        {
+            "date": str(row.get("date") or ""),
+            "net_flow_usd": float(row.get("net_flow_usd", 0) or 0),
+            "close_price": _first_number(row, ("close_price", "closePrice", "price")) or 0,
+        }
+        for row in history
+    ]
+    recent_rows = normalized_history[-7:]
     seven_day_flow = round(sum(float(row.get("net_flow_usd", 0) or 0) for row in recent_rows), 2)
     trend = "neutral"
     if latest_flow > 0:
@@ -774,10 +785,37 @@ def _normalize_etf_payload(history: list[dict[str, Any]], source: str) -> dict[s
         "latest_net_flow_usd": latest_flow,
         "7d_flow": seven_day_flow,
         "trend": trend,
-        "flow_history": history,
+        "flow_history": normalized_history,
         "source": source,
         "error": "",
     }
+
+
+def _etf_date_is_recent(value: str, max_age_days: int = ETF_MAX_AGE_DAYS) -> bool:
+    parsed = _parse_etf_date(value)
+    if parsed is None:
+        return False
+    today = _utc_now_dt().date()
+    age_days = (today - parsed).days
+    return 0 <= age_days <= max_age_days
+
+
+def _parse_etf_date(value: str) -> datetime.date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    for fmt in ("%b %d", "%B %d"):
+        try:
+            parsed = datetime.strptime(text, fmt).date()
+            return parsed.replace(year=_utc_now_dt().year)
+        except ValueError:
+            continue
+    return None
 
 
 def _parse_farside_etf_rows(html: str) -> list[dict[str, Any]]:
