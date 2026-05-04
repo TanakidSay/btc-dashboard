@@ -1,0 +1,9 @@
+# Replace btc.example.com with your real domain after DNS points to this server.
+btc.example.com {
+    encode zstd gzip
+
+    reverse_proxy 127.0.0.1:5001 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+}

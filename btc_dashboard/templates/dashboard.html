@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bitcoin Analytics Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .risk-safe { color: #22c55e; }
+        .risk-low { color: #22c55e; }
+        .risk-medium { color: #f59e0b; }
+        .risk-high { color: #ef4444; }
+        .risk-critical { color: #dc2626; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        .pool-bar { height: 8px; border-radius: 4px; transition: width 0.5s ease; }
+    </style>
+</head>
+<body class="bg-gray-950 text-white">
+<main class="mx-auto max-w-7xl p-4 sm:p-6">
+    <header class="mb-6 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <p class="text-sm font-semibold uppercase tracking-wide text-amber-400">Market monitor</p>
+            <h1 class="text-3xl font-bold">Bitcoin Dashboard</h1>
+        </div>
+        <p class="text-sm text-gray-400">Auto-refreshes every 5 seconds</p>
+    </header>
+
+    <section class="mb-6" aria-label="Market pulse">
+        <div class="mb-3 flex items-end justify-between gap-3">
+            <div>
+                <h2 class="text-lg font-semibold">Market Pulse</h2>
+                <p class="text-xs text-gray-500">Price, flow, treasury, and network health</p>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+                <h2 class="text-sm text-gray-400">BTC Price</h2>
+                <p id="btcPrice" class="text-3xl font-bold text-green-400">Loading...</p>
+            </article>
+            <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+                <div class="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                        <h2 class="text-sm text-gray-400">ETF Net Flow</h2>
+                        <p id="etfNetFlow" class="text-3xl font-bold text-gray-100">Loading...</p>
+                    </div>
+                    <span id="etfFlowStatus" class="rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-300">-</span>
+                </div>
+                <p id="etfFlowSource" class="text-xs text-gray-500">Source: loading</p>
+            </article>
+            <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+                <h2 class="text-sm text-gray-400">Treasury BTC Holdings</h2>
+                <p id="treasuryBtcHeld" class="text-3xl font-bold text-gray-100">Loading...</p>
+                <p id="treasuryDominance" class="mt-1 text-xs text-gray-500">Dominance: -</p>
+            </article>
+            <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+                <h2 class="text-sm text-gray-400">Network Health</h2>
+                <div class="mt-2 grid gap-2">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-500">Hashrate</span>
+                        <span id="hashrate" class="font-semibold">Loading...</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-500">Nodes</span>
+                        <span id="nodes" class="font-semibold">Loading...</span>
+                    </div>
+                    <div class="border-t border-gray-800 pt-2">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-xs text-gray-500">Security</span>
+                            <span id="networkSecurityStatus" class="text-sm font-semibold text-gray-300">Loading...</span>
+                        </div>
+                        <p id="networkSecuritySummary" class="mt-1 text-xs text-gray-500">Waiting for security scan.</p>
+                    </div>
+                </div>
+            </article>
+        </div>
+    </section>
+
+    <section class="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-3" aria-label="Trading action">
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow xl:col-span-2">
+            <div class="mb-4 flex items-center justify-between">
+                <h2 class="font-semibold text-lg">Fee Recommendation</h2>
+                <span id="feeRecSource" class="text-xs text-gray-500">Loading...</span>
+            </div>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <article class="rounded-lg bg-gray-800 p-4 text-center">
+                    <p class="text-xs text-gray-400 mb-1">Next Block (~10 min)</p>
+                    <p id="feeNextBlock" class="text-3xl font-bold text-white">-</p>
+                    <p class="text-xs text-gray-500 mb-2">sat/vB</p>
+                    <span id="feeNextBlockBadge" class="inline-block rounded px-2 py-1 text-xs font-semibold">-</span>
+                    <p id="feeNextBlockAdvice" class="text-xs text-gray-400 mt-2">-</p>
+                </article>
+                <article class="rounded-lg bg-gray-800 p-4 text-center">
+                    <p class="text-xs text-gray-400 mb-1">~30 Minutes</p>
+                    <p id="fee30Min" class="text-3xl font-bold text-white">-</p>
+                    <p class="text-xs text-gray-500 mb-2">sat/vB</p>
+                    <span id="fee30MinBadge" class="inline-block rounded px-2 py-1 text-xs font-semibold">-</span>
+                    <p id="fee30MinAdvice" class="text-xs text-gray-400 mt-2">-</p>
+                </article>
+                <article class="rounded-lg bg-gray-800 p-4 text-center">
+                    <p class="text-xs text-gray-400 mb-1">~1 Hour</p>
+                    <p id="fee1Hour" class="text-3xl font-bold text-white">-</p>
+                    <p class="text-xs text-gray-500 mb-2">sat/vB</p>
+                    <span id="fee1HourBadge" class="inline-block rounded px-2 py-1 text-xs font-semibold">-</span>
+                    <p id="fee1HourAdvice" class="text-xs text-gray-400 mt-2">-</p>
+                </article>
+            </div>
+        </article>
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+            <div class="mb-3 flex items-center justify-between gap-3">
+                <h2 class="font-semibold">Alerts</h2>
+                <span id="alertCount" class="rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-300">0 active</span>
+            </div>
+            <div id="alertBox" class="grid gap-3" role="status"></div>
+        </article>
+    </section>
+
+    <section class="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3" aria-label="Institutional metrics">
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+            <h2 class="mb-2 text-sm text-gray-400">Institutional Insight</h2>
+            <p id="institutionalInsight" class="text-sm font-semibold text-gray-200">Loading...</p>
+            <div id="treasuryTopHolders" class="mt-3 grid gap-1 text-xs text-gray-400"></div>
+        </article>
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow lg:col-span-2">
+            <h2 class="mb-2 font-semibold">ETF Flow History</h2>
+            <div class="h-64"><canvas id="etfFlowChart"></canvas></div>
+        </article>
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow lg:col-span-3">
+            <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <h2 class="font-semibold">BTC Supply Ownership</h2>
+                    <p id="supplyOwnershipNote" class="text-xs text-gray-500">Loading...</p>
+                </div>
+                <p id="supplyCirculating" class="text-sm text-gray-400">Circulating: -</p>
+            </div>
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <div class="h-72 lg:col-span-1"><canvas id="supplyOwnershipChart"></canvas></div>
+                <div id="supplyOwnershipList" class="grid gap-2 text-sm lg:col-span-2"></div>
+            </div>
+        </article>
+    </section>
+
+    <section class="mb-6 grid grid-cols-1 gap-6 md:grid-cols-2" aria-label="Charts">
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow md:col-span-2">
+            <h2 class="mb-2 font-semibold">BTC Price</h2>
+            <div class="h-72"><canvas id="priceChart"></canvas></div>
+        </article>
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+            <h2 class="mb-2 font-semibold">Fee (sat/vB)</h2>
+            <div class="h-64"><canvas id="feeChart"></canvas></div>
+        </article>
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+            <h2 class="mb-2 font-semibold">Transaction Count</h2>
+            <div class="h-64"><canvas id="txChart"></canvas></div>
+        </article>
+        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow md:col-span-2">
+            <h2 class="mb-2 font-semibold">Network Hashrate</h2>
+            <div class="h-64"><canvas id="hashChart"></canvas></div>
+        </article>
+    </section>
+
+    <section class="mb-6 rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" aria-label="Security">
+        <div class="mb-4 flex items-center justify-between">
+            <h2 class="font-semibold text-lg">Network Security Monitor</h2>
+            <span id="securityLastUpdate" class="text-xs text-gray-500">Updating...</span>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 mb-6">
+            <article class="rounded-lg bg-gray-800 p-3">
+                <h3 class="text-xs text-gray-400 mb-1">Double-Spend Attempts</h3>
+                <p id="doubleSpendCount" class="text-2xl font-bold">-</p>
+                <p class="text-xs text-gray-500">Orphaned/Stale Blocks</p>
+                <span id="doubleSpendRisk" class="text-xs font-semibold mt-1 inline-block">-</span>
+            </article>
+            <article class="rounded-lg bg-gray-800 p-3">
+                <h3 class="text-xs text-gray-400 mb-1">51% Attack Risk</h3>
+                <p id="topPoolShare" class="text-2xl font-bold">-</p>
+                <p id="topPoolName" class="text-xs text-gray-500">Top Pool</p>
+                <span id="attackRisk" class="text-xs font-semibold mt-1 inline-block">-</span>
+            </article>
+            <article class="rounded-lg bg-gray-800 p-3">
+                <h3 class="text-xs text-gray-400 mb-1">Invalid Block Attempts</h3>
+                <p id="invalidBlockCount" class="text-2xl font-bold">-</p>
+                <p class="text-xs text-gray-500">Invalid Chains Detected</p>
+                <span id="invalidBlockRisk" class="text-xs font-semibold mt-1 inline-block">-</span>
+            </article>
+            <article class="rounded-lg bg-gray-800 p-3">
+                <h3 class="text-xs text-gray-400 mb-1">Reorg Events</h3>
+                <p id="reorgCount" class="text-2xl font-bold">-</p>
+                <p id="reorgMaxBranch" class="text-xs text-gray-500">Max Branch Length: -</p>
+                <span id="reorgRisk" class="text-xs font-semibold mt-1 inline-block">-</span>
+            </article>
+        </div>
+
+        <div>
+            <h3 class="text-sm font-semibold mb-3 text-gray-300">Mining Pool Distribution (7 days)</h3>
+            <div id="poolList" class="space-y-2"></div>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2 mt-4">
+            <div>
+                <h3 class="text-sm font-semibold mb-2 text-gray-300">Orphaned Blocks</h3>
+                <div id="orphanList" class="text-xs text-gray-400 space-y-1"></div>
+            </div>
+            <div>
+                <h3 class="text-sm font-semibold mb-2 text-gray-300">Reorg Events</h3>
+                <div id="reorgList" class="text-xs text-gray-400 space-y-1"></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="overflow-auto rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" aria-label="Latest fee data">
+        <h2 class="mb-2 font-semibold">Latest Data</h2>
+        {{ table|safe }}
+    </section>
+</main>
+<script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: btc-dashboard
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn "btc_dashboard.app:create_app()" --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60
+    healthCheckPath: /health
+    envVars:
+      - key: FLASK_DEBUG
+        value: false
+      - key: START_WORKER
+        value: true
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DASHBOARD_USERNAME
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: DASHBOARD_API_TOKEN
+        sync: false

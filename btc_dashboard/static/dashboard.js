@@ -1,0 +1,653 @@
+let feeChart;
+let hashChart;
+let priceChart;
+let txChart;
+let etfFlowChart;
+let supplyOwnershipChart;
+
+const sharedChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { intersect: false, mode: "index" },
+    plugins: { legend: { labels: { color: "#d1d5db" } } },
+    scales: {
+        x: { ticks: { color: "#9ca3af", maxRotation: 0 }, grid: { color: "rgba(75, 85, 99, 0.35)" } },
+        y: { beginAtZero: true, ticks: { color: "#9ca3af" }, grid: { color: "rgba(75, 85, 99, 0.35)" } },
+    },
+};
+
+async function fetchJson(url) {
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+        return response.json();
+    } catch (error) {
+        console.error(`Failed to fetch ${url}`, error);
+        throw error;
+    }
+}
+
+function valueOrNA(value) {
+    return value === undefined || value === null || value === "" ? "N/A" : value;
+}
+
+function formatUsd(value) {
+    if (value === undefined || value === null || value === "" || value === "N/A") return "N/A";
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `$${numeric.toLocaleString()}` : `$${value}`;
+}
+
+function formatCompactUsd(value) {
+    if (value === undefined || value === null || value === "" || value === "N/A") return "N/A";
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "N/A";
+    const sign = numeric < 0 ? "-" : "";
+    const abs = Math.abs(numeric);
+    if (abs >= 1_000_000_000) return `${sign}$${(abs / 1_000_000_000).toFixed(2)}B`;
+    if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
+    if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(2)}K`;
+    return `${sign}$${abs.toFixed(2)}`;
+}
+
+function formatBtc(value) {
+    if (value === undefined || value === null || value === "" || value === "N/A") return "N/A";
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${numeric.toLocaleString(undefined, { maximumFractionDigits: 0 })} BTC` : "N/A";
+}
+
+function formatPercent(value) {
+    if (value === undefined || value === null || value === "" || value === "N/A") return "N/A";
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${numeric.toFixed(2)}%` : "N/A";
+}
+
+function formatFlowDate(value) {
+    if (!value) return "";
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return new Date(numeric).toLocaleDateString();
+    return String(value);
+}
+
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function riskClass(level) {
+    const map = { safe: "risk-safe", low: "risk-low", medium: "risk-medium", high: "risk-high", critical: "risk-critical", unknown: "text-gray-400" };
+    return map[level] || "text-gray-400";
+}
+
+function riskLabel(level) {
+    const map = { safe: "✅ SAFE", low: "✅ LOW", medium: "⚠️ MEDIUM", high: "🔴 HIGH", critical: "🚨 CRITICAL", unknown: "❓ UNKNOWN" };
+    return map[level] || level?.toUpperCase() || "-";
+}
+
+function normalizeRisk(level) {
+    return level || "unknown";
+}
+
+function worstSecurityRisk(data) {
+    const priority = { unknown: 0, safe: 1, low: 1, medium: 2, high: 3, critical: 4 };
+    const risks = [
+        normalizeRisk(data?.double_spend?.risk_level),
+        normalizeRisk(data?.attack_51?.risk_level),
+        normalizeRisk(data?.invalid_blocks?.risk_level),
+        normalizeRisk(data?.reorgs?.risk_level),
+    ];
+    return risks.reduce((worst, risk) => (priority[risk] > priority[worst] ? risk : worst), "unknown");
+}
+
+function updateNetworkSecuritySummary(data) {
+    const status = worstSecurityRisk(data);
+    const attackData = data?.attack_51 ?? {};
+    const topPool = attackData.pools?.[0] ?? {};
+    const topPoolShare = attackData.top_pool_share ?? topPool.share;
+    const topPoolName = topPool.name ?? "Unknown pool";
+    const attackRisk = attackData.risk_level ?? "unknown";
+    const statusEl = document.getElementById("networkSecurityStatus");
+    const summaryEl = document.getElementById("networkSecuritySummary");
+    if (!statusEl || !summaryEl) return;
+    statusEl.textContent = riskLabel(status);
+    statusEl.className = `text-sm font-semibold ${riskClass(status)}`;
+    summaryEl.innerHTML = `
+        <span class="block font-semibold ${riskClass(attackRisk)}">
+            51% Attack Risk: ${escapeHtml(topPoolShare ?? "-")}% ${escapeHtml(topPoolName)}
+            ${escapeHtml(riskLabel(attackRisk))}
+        </span>
+        <span class="block">
+            Double-spend: ${escapeHtml(data?.double_spend?.risk_level ?? "unknown")}
+            | Invalid: ${escapeHtml(data?.invalid_blocks?.risk_level ?? "unknown")}
+            | Reorg: ${escapeHtml(data?.reorgs?.risk_level ?? "unknown")}
+        </span>
+    `;
+}
+
+// ── Security ──────────────────────────────────────────────
+async function updateSecurity() {
+    let data;
+    try {
+        data = await fetchJson("/api/security");
+    } catch (error) {
+        console.error("Failed to update security data", error);
+        data = {
+            double_spend: { orphan_count: 0, orphans: [], risk_level: "unknown" },
+            attack_51: { pools: [], top_pool_share: 0, risk_level: "unknown" },
+            invalid_blocks: { invalid_count: 0, risk_level: "unknown" },
+            reorgs: { reorg_count: 0, reorgs: [], max_branch_length: 0, risk_level: "unknown" },
+        };
+    }
+    updateNetworkSecuritySummary(data);
+    const now = new Date().toLocaleTimeString();
+    document.getElementById("securityLastUpdate").textContent = `Updated: ${now}`;
+
+    // Double Spend
+    const ds = data.double_spend ?? {};
+    document.getElementById("doubleSpendCount").textContent = ds.orphan_count ?? "-";
+    const dsRisk = document.getElementById("doubleSpendRisk");
+    dsRisk.textContent = riskLabel(ds.risk_level);
+    dsRisk.className = `text-xs font-semibold mt-1 inline-block ${riskClass(ds.risk_level)}`;
+
+    // 51% Attack
+    const a51 = data.attack_51 ?? {};
+    document.getElementById("topPoolShare").textContent = a51.top_pool_share ? `${a51.top_pool_share}%` : "-";
+    document.getElementById("topPoolName").textContent = a51.pools?.[0]?.name ?? "Unknown";
+    const ar = document.getElementById("attackRisk");
+    ar.textContent = riskLabel(a51.risk_level);
+    ar.className = `text-xs font-semibold mt-1 inline-block ${riskClass(a51.risk_level)}`;
+
+    // Invalid Blocks
+    const ib = data.invalid_blocks ?? {};
+    document.getElementById("invalidBlockCount").textContent = ib.invalid_count ?? "-";
+    const ibRisk = document.getElementById("invalidBlockRisk");
+    ibRisk.textContent = riskLabel(ib.risk_level);
+    ibRisk.className = `text-xs font-semibold mt-1 inline-block ${riskClass(ib.risk_level)}`;
+
+    // Reorgs
+    const rg = data.reorgs ?? {};
+    document.getElementById("reorgCount").textContent = rg.reorg_count ?? "-";
+    document.getElementById("reorgMaxBranch").textContent = `Max Branch Length: ${rg.max_branch_length ?? "-"}`;
+    const rgRisk = document.getElementById("reorgRisk");
+    rgRisk.textContent = riskLabel(rg.risk_level);
+    rgRisk.className = `text-xs font-semibold mt-1 inline-block ${riskClass(rg.risk_level)}`;
+
+    // Pool Distribution
+    const poolList = document.getElementById("poolList");
+    poolList.innerHTML = (a51.pools || []).map(pool => {
+        const barColor = pool.risk === "critical" ? "#dc2626" : pool.risk === "high" ? "#ef4444" : pool.risk === "medium" ? "#f59e0b" : "#22c55e";
+        return `
+            <div class="flex items-center gap-3">
+                <span class="text-xs text-gray-300 w-32 truncate">${escapeHtml(pool.name)}</span>
+                <div class="flex-1 bg-gray-700 rounded" style="height:8px">
+                    <div class="pool-bar" style="width:${Math.min(pool.share, 100)}%;background:${barColor}"></div>
+                </div>
+                <span class="text-xs w-14 text-right ${riskClass(pool.risk)}">${pool.share}%</span>
+                <span class="text-xs text-gray-500 w-16 text-right">${pool.blocks} blocks</span>
+            </div>`;
+    }).join("");
+
+    // Orphan list
+    const orphanList = document.getElementById("orphanList");
+    if (!ds.orphans || ds.orphans.length === 0) {
+        orphanList.innerHTML = `<p class="text-gray-500">No orphaned blocks detected ✅</p>`;
+    } else {
+        orphanList.innerHTML = ds.orphans.map(o => `
+            <div class="rounded bg-gray-800 p-2">
+                <span class="text-yellow-400">Block #${o.height}</span>
+                <span class="ml-2 text-gray-500">${o.hash}</span>
+                <span class="ml-2 text-gray-400">branch: ${o.branch_len}</span>
+                <span class="ml-2 text-xs text-gray-500">${o.status}</span>
+            </div>`).join("");
+    }
+
+    // Reorg list
+    const reorgList = document.getElementById("reorgList");
+    if (!rg.reorgs || rg.reorgs.length === 0) {
+        reorgList.innerHTML = `<p class="text-gray-500">No reorg events detected ✅</p>`;
+    } else {
+        reorgList.innerHTML = rg.reorgs.map(r => `
+            <div class="rounded bg-gray-800 p-2">
+                <span class="${riskClass(r.severity)}">Block #${r.height}</span>
+                <span class="ml-2 text-gray-500">${r.hash}</span>
+                <span class="ml-2 text-gray-400">branch: ${r.branch_len}</span>
+                <span class="ml-2 text-xs text-gray-500">depth: ${r.depth_from_tip}</span>
+            </div>`).join("");
+    }
+}
+
+// ── Price ─────────────────────────────────────────────────
+async function fetchPrice() { return fetchJson("/api/price"); }
+
+async function initPriceChart() {
+    let data = { time: [], price: [], price_usd: "N/A", latest: "N/A" };
+    try {
+        data = await fetchPrice();
+    } catch (error) {
+        console.error("Failed to initialize BTC price chart", error);
+    }
+    priceChart = new Chart(document.getElementById("priceChart"), {
+        type: "line",
+        data: { labels: data.time ?? [], datasets: [{ label: "BTC Price", data: data.price ?? [], borderColor: "#22c55e", backgroundColor: "rgba(34,197,94,0.12)", tension: 0.25, fill: true }] },
+        options: sharedChartOptions,
+    });
+    document.getElementById("btcPrice").innerText = formatUsd(data.price_usd ?? data.latest);
+}
+
+async function updatePriceChart() {
+    try {
+        const data = await fetchPrice();
+        priceChart.data.labels = data.time ?? [];
+        priceChart.data.datasets[0].data = data.price ?? [];
+        priceChart.update();
+        document.getElementById("btcPrice").innerText = formatUsd(data.price_usd ?? data.latest);
+    } catch (error) {
+        console.error("Failed to update BTC price", error);
+        document.getElementById("btcPrice").innerText = "N/A";
+    }
+}
+
+// ── Fee ───────────────────────────────────────────────────
+async function fetchFee() { return fetchJson("/api/fees"); }
+
+async function initFeeChart() {
+    let data = { height: [], fee: [] };
+    try {
+        data = await fetchFee();
+    } catch (error) {
+        console.error("Failed to initialize fee chart", error);
+    }
+    feeChart = new Chart(document.getElementById("feeChart"), {
+        type: "line",
+        data: { labels: data.height ?? [], datasets: [{ label: "sat/vB", data: data.fee ?? [], borderColor: "#3b82f6", backgroundColor: "rgba(59,130,246,0.12)", tension: 0.25, fill: true }] },
+        options: sharedChartOptions,
+    });
+}
+
+async function updateFeeChart() {
+    try {
+        const data = await fetchFee();
+        if (!feeChart) return;
+        feeChart.data.labels = data.height ?? [];
+        feeChart.data.datasets[0].data = data.fee ?? [];
+        feeChart.update();
+    } catch (error) {
+        console.error("Failed to update fee chart", error);
+    }
+}
+
+// ── Transactions ──────────────────────────────────────────
+async function fetchTransactions() { return fetchJson("/api/transactions"); }
+
+async function initTxChart() {
+    let data = { height: [], tx_count: [] };
+    try {
+        data = await fetchTransactions();
+    } catch (error) {
+        console.error("Failed to initialize transaction chart", error);
+    }
+    txChart = new Chart(document.getElementById("txChart"), {
+        type: "bar",
+        data: { labels: data.height ?? [], datasets: [{ label: "Transactions", data: data.tx_count ?? [], borderColor: "#a855f7", backgroundColor: "rgba(168,85,247,0.45)", borderWidth: 1 }] },
+        options: sharedChartOptions,
+    });
+}
+
+async function updateTxChart() {
+    try {
+        const data = await fetchTransactions();
+        if (!txChart) return;
+        txChart.data.labels = data.height ?? [];
+        txChart.data.datasets[0].data = data.tx_count ?? [];
+        txChart.update();
+    } catch (error) {
+        console.error("Failed to update transaction chart", error);
+    }
+}
+
+// ── Hashrate ──────────────────────────────────────────────
+async function fetchHash() { return fetchJson("/api/hashrate"); }
+
+async function initHashChart() {
+    let data = { time: [], hashrate: [] };
+    try {
+        data = await fetchHash();
+    } catch (error) {
+        console.error("Failed to initialize hashrate chart", error);
+    }
+    hashChart = new Chart(document.getElementById("hashChart"), {
+        type: "line",
+        data: { labels: data.time ?? [], datasets: [{ label: "Hashrate", data: data.hashrate ?? [], borderColor: "#f59e0b", backgroundColor: "rgba(245,158,11,0.12)", tension: 0.25, fill: true }] },
+        options: sharedChartOptions,
+    });
+}
+
+async function updateHashChart() {
+    try {
+        const data = await fetchHash();
+        if (!hashChart) return;
+        hashChart.data.labels = data.time ?? [];
+        hashChart.data.datasets[0].data = data.hashrate ?? [];
+        hashChart.update();
+    } catch (error) {
+        console.error("Failed to update hashrate chart", error);
+    }
+}
+
+// ── Network ───────────────────────────────────────────────
+async function updateNetwork() {
+    try {
+        const data = await fetchJson("/api/network");
+        document.getElementById("hashrate").innerText = data.hashrate ?? "N/A";
+        document.getElementById("nodes").innerText = data.nodes ?? "N/A";
+    } catch (error) {
+        console.error("Failed to update network data", error);
+        document.getElementById("hashrate").innerText = "N/A";
+        document.getElementById("nodes").innerText = "N/A";
+    }
+}
+
+// Institutional metrics
+async function fetchEtfFlow() { return fetchJson("/api/etf"); }
+async function fetchTreasury() { return fetchJson("/api/treasury"); }
+async function fetchSupplyOwnership() { return fetchJson("/api/supply-ownership"); }
+
+function institutionalInsight(etfData, treasuryData, priceData) {
+    const prices = priceData?.price ?? [];
+    const latestPrice = Number(prices.at(-1));
+    const previousPrice = Number(prices.at(-2));
+    const priceRising = Number.isFinite(latestPrice) && Number.isFinite(previousPrice) && latestPrice > previousPrice;
+    const priceFalling = Number.isFinite(latestPrice) && Number.isFinite(previousPrice) && latestPrice < previousPrice;
+    const dominance = Number(treasuryData?.treasury_dominance_percent);
+
+    if (etfData?.status === "inflow" && priceRising) {
+        return "ETF inflow with rising BTC price: institutional demand is positive.";
+    }
+    if (etfData?.status === "outflow" && priceFalling) {
+        return "ETF outflow with falling BTC price: institutional posture is risk-off.";
+    }
+    if (Number.isFinite(dominance) && dominance > 0) {
+        return "Treasury dominance is visible: long-term accumulation remains an institutional signal.";
+    }
+    return "Institutional signal is neutral until fresh ETF or treasury data is available.";
+}
+
+function renderInstitutionalCards(etfData, treasuryData, priceData) {
+    document.getElementById("etfNetFlow").innerText = formatCompactUsd(etfData.latest_net_flow_usd);
+    document.getElementById("etfFlowSource").innerText = `Source: ${etfData.source ?? "fallback"}`;
+
+    const status = etfData.status ?? "neutral";
+    const statusEl = document.getElementById("etfFlowStatus");
+    statusEl.innerText = status.toUpperCase();
+    statusEl.className = status === "inflow"
+        ? "rounded bg-green-700 px-2 py-1 text-xs font-semibold text-green-100"
+        : status === "outflow"
+        ? "rounded bg-red-700 px-2 py-1 text-xs font-semibold text-red-100"
+        : "rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-300";
+
+    document.getElementById("treasuryBtcHeld").innerText = formatBtc(treasuryData.total_btc_held);
+    document.getElementById("treasuryDominance").innerText = `Dominance: ${formatPercent(treasuryData.treasury_dominance_percent)}`;
+    document.getElementById("institutionalInsight").innerText = institutionalInsight(etfData, treasuryData, priceData);
+
+    const holders = treasuryData.top_holders ?? [];
+    document.getElementById("treasuryTopHolders").innerHTML = holders.length
+        ? holders.map((holder) => `
+            <div class="flex justify-between gap-3">
+                <span class="truncate">${escapeHtml(holder.name ?? "Unknown")}</span>
+                <span class="text-gray-300">${formatBtc(holder.btc_held)}</span>
+            </div>`).join("")
+        : `<p class="text-gray-500">Top holders unavailable.</p>`;
+}
+
+async function initEtfFlowChart() {
+    let etfData = { flow_history: [], latest_net_flow_usd: "N/A", status: "neutral", source: "fallback" };
+    let treasuryData = { total_btc_held: "N/A", treasury_dominance_percent: "N/A", top_holders: [] };
+    let priceData = { price: [] };
+    try {
+        [etfData, treasuryData, priceData] = await Promise.all([fetchEtfFlow(), fetchTreasury(), fetchPrice()]);
+    } catch (error) {
+        console.error("Failed to initialize institutional metrics", error);
+    }
+    const history = etfData.flow_history ?? [];
+    etfFlowChart = new Chart(document.getElementById("etfFlowChart"), {
+        type: "bar",
+        data: {
+            labels: history.map((row) => formatFlowDate(row.date)),
+            datasets: [{
+                label: "Net Flow USD",
+                data: history.map((row) => row.net_flow_usd === "N/A" ? 0 : row.net_flow_usd),
+                backgroundColor: history.map((row) => Number(row.net_flow_usd) < 0 ? "rgba(239,68,68,0.55)" : "rgba(34,197,94,0.55)"),
+                borderColor: history.map((row) => Number(row.net_flow_usd) < 0 ? "#ef4444" : "#22c55e"),
+                borderWidth: 1,
+            }],
+        },
+        options: sharedChartOptions,
+    });
+    renderInstitutionalCards(etfData, treasuryData, priceData);
+}
+
+function renderSupplyOwnership(data) {
+    const ownership = data.ownership ?? [];
+    document.getElementById("supplyOwnershipNote").innerText = data.note ?? "Estimated ownership distribution.";
+    document.getElementById("supplyCirculating").innerText = `Circulating: ${formatBtc(data.circulating_supply_btc)}`;
+    document.getElementById("supplyOwnershipList").innerHTML = ownership.length
+        ? ownership.map((row) => `
+            <div class="rounded bg-gray-800 p-3">
+                <div class="flex items-center justify-between gap-3">
+                    <span class="font-semibold text-gray-100">${escapeHtml(row.label)}</span>
+                    <span class="text-gray-300">${formatPercent(row.percent_of_max_supply)}</span>
+                </div>
+                <div class="mt-1 flex items-center justify-between gap-3 text-xs text-gray-400">
+                    <span>${formatBtc(row.btc)}</span>
+                    <span>${escapeHtml(row.confidence ?? "estimated")} | ${escapeHtml(row.source ?? "unknown")}</span>
+                </div>
+            </div>`).join("")
+        : `<p class="text-gray-500">Ownership data unavailable.</p>`;
+}
+
+async function initSupplyOwnershipChart() {
+    let data = { ownership: [], note: "Loading...", circulating_supply_btc: "N/A" };
+    try {
+        data = await fetchSupplyOwnership();
+    } catch (error) {
+        console.error("Failed to initialize BTC supply ownership", error);
+    }
+    const ownership = data.ownership ?? [];
+    supplyOwnershipChart = new Chart(document.getElementById("supplyOwnershipChart"), {
+        type: "doughnut",
+        data: {
+            labels: ownership.map((row) => row.label),
+            datasets: [{
+                data: ownership.map((row) => row.btc),
+                backgroundColor: ["#22c55e", "#f59e0b", "#64748b"],
+                borderColor: "#111827",
+                borderWidth: 2,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom", labels: { color: "#d1d5db" } } },
+        },
+    });
+    renderSupplyOwnership(data);
+}
+
+async function updateInstitutionalMetrics() {
+    try {
+        const [etfData, treasuryData, priceData] = await Promise.all([fetchEtfFlow(), fetchTreasury(), fetchPrice()]);
+        const history = etfData.flow_history ?? [];
+        if (etfFlowChart) {
+            etfFlowChart.data.labels = history.map((row) => formatFlowDate(row.date));
+            etfFlowChart.data.datasets[0].data = history.map((row) => row.net_flow_usd === "N/A" ? 0 : row.net_flow_usd);
+            etfFlowChart.data.datasets[0].backgroundColor = history.map((row) => Number(row.net_flow_usd) < 0 ? "rgba(239,68,68,0.55)" : "rgba(34,197,94,0.55)");
+            etfFlowChart.data.datasets[0].borderColor = history.map((row) => Number(row.net_flow_usd) < 0 ? "#ef4444" : "#22c55e");
+            etfFlowChart.update();
+        }
+        renderInstitutionalCards(etfData, treasuryData, priceData);
+    } catch (error) {
+        console.error("Failed to update institutional metrics", error);
+        renderInstitutionalCards(
+            { flow_history: [], latest_net_flow_usd: "N/A", status: "neutral", source: "fallback" },
+            { total_btc_held: "N/A", treasury_dominance_percent: "N/A", top_holders: [] },
+            { price: [] },
+        );
+    }
+}
+
+async function updateSupplyOwnership() {
+    try {
+        const data = await fetchSupplyOwnership();
+        const ownership = data.ownership ?? [];
+        if (supplyOwnershipChart) {
+            supplyOwnershipChart.data.labels = ownership.map((row) => row.label);
+            supplyOwnershipChart.data.datasets[0].data = ownership.map((row) => row.btc);
+            supplyOwnershipChart.update();
+        }
+        renderSupplyOwnership(data);
+    } catch (error) {
+        console.error("Failed to update BTC supply ownership", error);
+    }
+}
+
+// ── Alerts ────────────────────────────────────────────────
+async function updateAlert() {
+    let data;
+    try {
+        data = await fetchJson("/api/alert");
+    } catch (error) {
+        console.error("Failed to update alerts", error);
+        data = { alerts: [] };
+    }
+    const alertBox = document.getElementById("alertBox");
+    const alertCount = document.getElementById("alertCount");
+    const alerts = data.alerts ?? [];
+    alertCount.innerText = `${alerts.length} active`;
+    if (alerts.length === 0) {
+        alertBox.innerHTML = `<p class="text-sm text-gray-400">No active alerts.</p>`;
+        return;
+    }
+    alertBox.innerHTML = alerts.map((alert) => {
+        const status = alert.status ?? "yellow";
+        const borderColor = status === "red"
+            ? "border-red-500/70 bg-red-950/40 text-red-100"
+            : status === "green"
+            ? "border-green-500/70 bg-green-950/40 text-green-100"
+            : "border-amber-500/70 bg-amber-950/40 text-amber-100";
+        const icon = status === "red" ? "🔴" : status === "green" ? "✅" : "⚠️";
+        const action = alert.action
+            ? `<div class="mt-2 text-xs px-2 py-1 rounded bg-black/20">${icon} ${escapeHtml(alert.action)}</div>`
+            : "";
+        return `<article class="rounded border ${borderColor} p-3">
+            <div class="mb-1 text-xs font-semibold uppercase text-gray-300">${escapeHtml((alert.type ?? "").replaceAll("_"," "))}</div>
+            <div class="font-semibold">${escapeHtml(alert.message ?? "")}</div>
+            ${action}
+        </article>`;
+    }).join("");
+}
+
+
+// ── Fee Recommendation ────────────────────────────────────
+function feeBadgeClass(label) {
+    const map = {
+        very_low: "bg-green-700 text-green-100",
+        low: "bg-green-600 text-green-100",
+        medium: "bg-yellow-600 text-yellow-100",
+        high: "bg-orange-600 text-orange-100",
+        very_high: "bg-red-700 text-red-100",
+    };
+    return map[label] || "bg-gray-700 text-gray-300";
+}
+
+function feeBadgeText(label) {
+    const map = {
+        very_low: "Very Low",
+        low: "Low",
+        medium: "Normal",
+        high: "High",
+        very_high: "Very High",
+    };
+    return map[label] || label;
+}
+
+async function updateFeeRecommendation() {
+    let data;
+    try {
+        data = await fetchJson("/api/fees");
+    } catch (error) {
+        console.error("Failed to update fee recommendation", error);
+        data = {
+            fastestFee: "N/A",
+            halfHourFee: "N/A",
+            hourFee: "N/A",
+            status: "error",
+            source: "mempool.space",
+        };
+    }
+
+    document.getElementById("feeRecSource").textContent = `Source: ${data.source ?? "mempool.space"}`;
+
+    const slots = [
+        { key: "fastestFee", elFee: "feeNextBlock", elBadge: "feeNextBlockBadge", elAdvice: "feeNextBlockAdvice" },
+        { key: "halfHourFee", elFee: "fee30Min", elBadge: "fee30MinBadge", elAdvice: "fee30MinAdvice" },
+        { key: "hourFee", elFee: "fee1Hour", elBadge: "fee1HourBadge", elAdvice: "fee1HourAdvice" },
+    ];
+
+    for (const slot of slots) {
+        const fee = valueOrNA(data[slot.key]);
+        const label = fee === "N/A" ? "N/A" : (
+            fee <= 2 ? "very_low" :
+            fee <= 5 ? "low" :
+            fee <= 15 ? "medium" :
+            fee <= 30 ? "high" :
+            "very_high"
+        );
+        const advice = fee === "N/A" ? "Data unavailable" : (
+            fee <= 2 ? "Excellent - fees extremely low" :
+            fee <= 5 ? "Good - cheap to send now" :
+            fee <= 15 ? "Normal - reasonable fee" :
+            fee <= 30 ? "Elevated - consider waiting" :
+            "Very high - wait if possible"
+        );
+        document.getElementById(slot.elFee).textContent = fee;
+        const badge = document.getElementById(slot.elBadge);
+        badge.textContent = feeBadgeText(label);
+        badge.className = `inline-block rounded px-2 py-1 text-xs font-semibold ${feeBadgeClass(label)}`;
+        document.getElementById(slot.elAdvice).textContent = advice;
+    }
+}
+
+// ── Refresh ───────────────────────────────────────────────
+async function refreshDashboard() {
+    await Promise.allSettled([
+        updatePriceChart(),
+        updateFeeChart(),
+        updateTxChart(),
+        updateHashChart(),
+        updateNetwork(),
+        updateInstitutionalMetrics(),
+        updateSupplyOwnership(),
+        updateAlert(),
+        updateSecurity(),
+        updateFeeRecommendation(),
+    ]);
+}
+
+async function initDashboard() {
+    await Promise.allSettled([
+        initPriceChart(),
+        initFeeChart(),
+        initTxChart(),
+        initHashChart(),
+        initEtfFlowChart(),
+        initSupplyOwnershipChart(),
+        updateNetwork(),
+        updateAlert(),
+        updateSecurity(),
+        updateFeeRecommendation(),
+    ]);
+    setInterval(refreshDashboard, 5000);
+}
+
+initDashboard().catch((error) => {
+    document.getElementById("alertBox").innerText = "Unable to load dashboard data.";
+    console.error(error);
+});
