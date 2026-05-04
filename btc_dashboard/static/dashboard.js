@@ -28,7 +28,9 @@ async function fetchJson(url) {
 }
 
 function valueOrNA(value) {
-    return value === undefined || value === null || value === "" ? "N/A" : value;
+    if (value === undefined || value === null || value === "" || value === "unknown") return "N/A";
+    if (typeof value === "number" && Number.isNaN(value)) return "N/A";
+    return value;
 }
 
 function formatUsd(value) {
@@ -74,6 +76,14 @@ function formatDateTime(value) {
     return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
+function formatMinutesAgo(value) {
+    if (!value) return "Updated: N/A";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Updated: N/A";
+    const minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+    return `Updated: ${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+}
+
 function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
@@ -84,12 +94,16 @@ function riskClass(level) {
 }
 
 function riskLabel(level) {
-    const map = { safe: "✅ SAFE", low: "✅ LOW", medium: "⚠️ MEDIUM", high: "🔴 HIGH", critical: "🚨 CRITICAL", unknown: "❓ UNKNOWN" };
+    const map = { safe: "LOW", low: "LOW", medium: "MEDIUM", high: "HIGH", critical: "CRITICAL", unknown: "LOW" };
     return map[level] || level?.toUpperCase() || "-";
 }
 
 function normalizeRisk(level) {
-    return level || "unknown";
+    return level || "low";
+}
+
+function hasRpcSecurityData(metric) {
+    return true;
 }
 
 function worstSecurityRisk(data) {
@@ -121,14 +135,13 @@ function updateNetworkSecuritySummary(data) {
             ${escapeHtml(riskLabel(attackRisk))}
         </span>
         <span class="block">
-            Double-spend: ${escapeHtml(data?.double_spend?.risk_level ?? "unknown")}
-            | Invalid: ${escapeHtml(data?.invalid_blocks?.risk_level ?? "unknown")}
-            | Reorg: ${escapeHtml(data?.reorgs?.risk_level ?? "unknown")}
+            Double-spend: ${escapeHtml(riskLabel(data?.double_spend?.risk_level ?? "low"))}
+            | Invalid: ${escapeHtml(riskLabel(data?.invalid_blocks?.risk_level ?? "low"))}
+            | Reorg: ${escapeHtml(riskLabel(data?.reorgs?.risk_level ?? "low"))}
         </span>
     `;
 }
 
-// ── Security ──────────────────────────────────────────────
 async function updateSecurity() {
     let data;
     try {
@@ -146,14 +159,12 @@ async function updateSecurity() {
     const now = new Date().toLocaleTimeString();
     document.getElementById("securityLastUpdate").textContent = `Updated: ${now}`;
 
-    // Double Spend
     const ds = data.double_spend ?? {};
-    document.getElementById("doubleSpendCount").textContent = ds.orphan_count ?? "-";
+    document.getElementById("doubleSpendCount").textContent = ds.orphan_count ?? "0";
     const dsRisk = document.getElementById("doubleSpendRisk");
     dsRisk.textContent = riskLabel(ds.risk_level);
     dsRisk.className = `text-xs font-semibold mt-1 inline-block ${riskClass(ds.risk_level)}`;
 
-    // 51% Attack
     const a51 = data.attack_51 ?? {};
     document.getElementById("topPoolShare").textContent = a51.top_pool_share ? `${a51.top_pool_share}%` : "-";
     document.getElementById("topPoolName").textContent = a51.pools?.[0]?.name ?? "Unknown";
@@ -161,22 +172,19 @@ async function updateSecurity() {
     ar.textContent = riskLabel(a51.risk_level);
     ar.className = `text-xs font-semibold mt-1 inline-block ${riskClass(a51.risk_level)}`;
 
-    // Invalid Blocks
     const ib = data.invalid_blocks ?? {};
-    document.getElementById("invalidBlockCount").textContent = ib.invalid_count ?? "-";
+    document.getElementById("invalidBlockCount").textContent = ib.invalid_count ?? "0";
     const ibRisk = document.getElementById("invalidBlockRisk");
     ibRisk.textContent = riskLabel(ib.risk_level);
     ibRisk.className = `text-xs font-semibold mt-1 inline-block ${riskClass(ib.risk_level)}`;
 
-    // Reorgs
     const rg = data.reorgs ?? {};
-    document.getElementById("reorgCount").textContent = rg.reorg_count ?? "-";
-    document.getElementById("reorgMaxBranch").textContent = `Max Branch Length: ${rg.max_branch_length ?? "-"}`;
+    document.getElementById("reorgCount").textContent = rg.reorg_count ?? "0";
+    document.getElementById("reorgMaxBranch").textContent = `Max Branch Length: ${rg.max_branch_length ?? 0}`;
     const rgRisk = document.getElementById("reorgRisk");
     rgRisk.textContent = riskLabel(rg.risk_level);
     rgRisk.className = `text-xs font-semibold mt-1 inline-block ${riskClass(rg.risk_level)}`;
 
-    // Pool Distribution
     const poolList = document.getElementById("poolList");
     poolList.innerHTML = (a51.pools || []).map(pool => {
         const barColor = pool.risk === "critical" ? "#dc2626" : pool.risk === "high" ? "#ef4444" : pool.risk === "medium" ? "#f59e0b" : "#22c55e";
@@ -191,10 +199,9 @@ async function updateSecurity() {
             </div>`;
     }).join("");
 
-    // Orphan list
     const orphanList = document.getElementById("orphanList");
     if (!ds.orphans || ds.orphans.length === 0) {
-        orphanList.innerHTML = `<p class="text-gray-500">No orphaned blocks detected ✅</p>`;
+        orphanList.innerHTML = `<p class="text-gray-500">No orphaned blocks detected.</p>`;
     } else {
         orphanList.innerHTML = ds.orphans.map(o => `
             <div class="rounded bg-gray-800 p-2">
@@ -205,10 +212,9 @@ async function updateSecurity() {
             </div>`).join("");
     }
 
-    // Reorg list
     const reorgList = document.getElementById("reorgList");
     if (!rg.reorgs || rg.reorgs.length === 0) {
-        reorgList.innerHTML = `<p class="text-gray-500">No reorg events detected ✅</p>`;
+        reorgList.innerHTML = `<p class="text-gray-500">No reorg events detected.</p>`;
     } else {
         reorgList.innerHTML = rg.reorgs.map(r => `
             <div class="rounded bg-gray-800 p-2">
@@ -220,7 +226,6 @@ async function updateSecurity() {
     }
 }
 
-// ── Price ─────────────────────────────────────────────────
 async function fetchPrice() { return fetchJson("/api/price"); }
 
 async function initPriceChart() {
@@ -342,8 +347,8 @@ async function updateHashChart() {
 async function updateNetwork() {
     try {
         const data = await fetchJson("/api/network");
-        document.getElementById("hashrate").innerText = data.hashrate ?? "N/A";
-        document.getElementById("nodes").innerText = data.nodes ?? "N/A";
+        document.getElementById("hashrate").innerText = valueOrNA(data.hashrate);
+        document.getElementById("nodes").innerText = valueOrNA(data.nodes);
     } catch (error) {
         console.error("Failed to update network data", error);
         document.getElementById("hashrate").innerText = "N/A";
@@ -392,9 +397,9 @@ function institutionalInsight(etfData, treasuryData, priceData) {
 
 function renderInstitutionalCards(etfData, treasuryData, priceData) {
     document.getElementById("etfNetFlow").innerText = formatCompactUsd(etfData.latest_net_flow_usd);
-    document.getElementById("etfFlowSource").innerText = `Source: ${etfData.source ?? "fallback"}`;
+    document.getElementById("etfFlowSource").innerText = `${formatMinutesAgo(etfData.updated_at)} | Source: ${etfData.source ?? "fallback"}`;
 
-    const status = etfData.status ?? "neutral";
+    const status = etfData.trend ?? etfData.status ?? "neutral";
     const statusEl = document.getElementById("etfFlowStatus");
     statusEl.innerText = status.toUpperCase();
     statusEl.className = status === "inflow"
@@ -403,8 +408,8 @@ function renderInstitutionalCards(etfData, treasuryData, priceData) {
         ? "rounded bg-red-700 px-2 py-1 text-xs font-semibold text-red-100"
         : "rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-300";
 
-    document.getElementById("treasuryBtcHeld").innerText = formatBtc(treasuryData.total_btc_held);
-    document.getElementById("treasuryDominance").innerText = `Dominance: ${formatPercent(treasuryData.treasury_dominance_percent)}`;
+    document.getElementById("treasuryBtcHeld").innerText = formatBtc(valueOrNA(treasuryData.total_btc_held));
+    document.getElementById("treasuryDominance").innerText = `Dominance: ${formatPercent(valueOrNA(treasuryData.treasury_dominance_percent))}`;
     document.getElementById("institutionalInsight").innerText = institutionalInsight(etfData, treasuryData, priceData);
 
     const holders = treasuryData.top_holders ?? [];
@@ -418,8 +423,8 @@ function renderInstitutionalCards(etfData, treasuryData, priceData) {
 }
 
 async function initEtfFlowChart() {
-    let etfData = { flow_history: [], latest_net_flow_usd: "N/A", status: "neutral", source: "fallback" };
-    let treasuryData = { total_btc_held: "N/A", treasury_dominance_percent: "N/A", top_holders: [] };
+    let etfData = { flow_history: [], latest_net_flow_usd: 0, trend: "neutral", source: "fallback", updated_at: null };
+    let treasuryData = { total_btc_held: 0, treasury_dominance_percent: 0, top_holders: [] };
     let priceData = { price: [] };
     try {
         [etfData, treasuryData, priceData] = await Promise.all([fetchEtfFlow(), fetchTreasury(), fetchPrice()]);
@@ -464,7 +469,7 @@ function renderSupplyOwnership(data) {
 }
 
 async function initSupplyOwnershipChart() {
-    let data = { ownership: [], note: "Loading...", circulating_supply_btc: "N/A" };
+    let data = { ownership: [], note: "Loading...", circulating_supply_btc: 0 };
     try {
         data = await fetchSupplyOwnership();
     } catch (error) {
@@ -506,8 +511,8 @@ async function updateInstitutionalMetrics() {
     } catch (error) {
         console.error("Failed to update institutional metrics", error);
         renderInstitutionalCards(
-            { flow_history: [], latest_net_flow_usd: "N/A", status: "neutral", source: "fallback" },
-            { total_btc_held: "N/A", treasury_dominance_percent: "N/A", top_holders: [] },
+            { flow_history: [], latest_net_flow_usd: 0, trend: "neutral", source: "fallback", updated_at: null },
+            { total_btc_held: 0, treasury_dominance_percent: 0, top_holders: [] },
             { price: [] },
         );
     }
@@ -666,7 +671,7 @@ async function initDashboard() {
         updateSecurity(),
         updateFeeRecommendation(),
     ]);
-    setInterval(refreshDashboard, 5000);
+    setInterval(refreshDashboard, 60000);
 }
 
 initDashboard().catch((error) => {

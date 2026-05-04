@@ -10,6 +10,7 @@ from .services import (
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
     get_etf_flow,
+    get_security_overview,
     get_viewer_stats,
     record_view,
     snapshot,
@@ -105,31 +106,35 @@ def api_transactions():
 def api_hashrate():
     try:
         data = snapshot()
+        points = data.get("hashrate_points", [])
         return jsonify({
-            "time": data["time_labels"],
-            "hashrate": data["hashrate_history"],
+            "time": [point["timestamp"] for point in points],
+            "hashrate": [point["value"] for point in points],
             "latest": format_hashrate(data["hashrate"]),
-            "latest_raw": data["hashrate"],
+            "latest_raw": data["hashrate"] if data["hashrate"] is not None else 0,
+            "updated_at": data.get("metric_timestamps", {}).get("hashrate"),
         })
     except Exception as exc:
         current_app.logger.exception("/api/hashrate failed: %s", exc)
-        return jsonify({"time": [], "hashrate": [], "latest": "N/A", "latest_raw": None})
+        return jsonify({"time": [], "hashrate": [], "latest": "N/A", "latest_raw": 0, "updated_at": None})
 
 
 @api.route("/api/price")
 def api_price():
     try:
         data = snapshot()
+        points = data.get("price_points", [])
         latest = data["btc_price"] if data["btc_price"] else "N/A"
         return jsonify({
-            "time": data["time_labels"],
-            "price": data["price_history"],
+            "time": [point["timestamp"] for point in points],
+            "price": [point["value"] for point in points],
             "latest": latest,
             "price_usd": latest,
+            "updated_at": data.get("metric_timestamps", {}).get("price"),
         })
     except Exception as exc:
         current_app.logger.exception("/api/price failed: %s", exc)
-        return jsonify({"time": [], "price": [], "latest": "N/A", "price_usd": "N/A"})
+        return jsonify({"time": [], "price": [], "latest": "N/A", "price_usd": "N/A", "updated_at": None})
 
 
 @api.route("/api/network")
@@ -138,12 +143,13 @@ def api_network():
         data = snapshot()
         return jsonify({
             "hashrate": format_hashrate(data["hashrate"]),
-            "hashrate_raw": data["hashrate"],
+            "hashrate_raw": data["hashrate"] if data["hashrate"] is not None else 0,
             "nodes": data["node_count"] if data["node_count"] else "N/A",
+            "updated_at": data.get("metric_timestamps", {}).get("network"),
         })
     except Exception as exc:
         current_app.logger.exception("/api/network failed: %s", exc)
-        return jsonify({"hashrate": "N/A", "hashrate_raw": None, "nodes": "N/A"})
+        return jsonify({"hashrate": "N/A", "hashrate_raw": 0, "nodes": "N/A", "updated_at": None})
 
 
 @api.route("/api/etf")
@@ -153,10 +159,15 @@ def api_etf():
     except Exception as exc:
         current_app.logger.exception("/api/etf failed: %s", exc)
         return jsonify({
-            "latest_net_flow_usd": "N/A",
+            "latest_date": None,
+            "latest_net_flow_usd": 0,
+            "7d_flow": 0,
+            "trend": "neutral",
             "flow_history": [],
-            "status": "neutral",
             "source": "fallback",
+            "updated_at": None,
+            "status": "error",
+            "error": str(exc),
         })
 
 
@@ -171,6 +182,9 @@ def api_treasury():
             "treasury_dominance_percent": "N/A",
             "top_holders": [],
             "source": "fallback",
+            "status": "error",
+            "updated_at": None,
+            "error": str(exc),
         })
 
 
@@ -182,12 +196,15 @@ def api_supply_ownership():
         current_app.logger.exception("/api/supply-ownership failed: %s", exc)
         return jsonify({
             "max_supply_btc": 21_000_000,
-            "circulating_supply_btc": "N/A",
-            "known_btc": "N/A",
-            "unknown_btc": "N/A",
+            "circulating_supply_btc": 0,
+            "known_btc": 0,
+            "unknown_btc": 21_000_000,
             "ownership": [],
             "top_holders": [],
             "source": "fallback",
+            "status": "error",
+            "updated_at": None,
+            "error": str(exc),
             "note": "Bitcoin addresses are pseudonymous, so owner attribution is estimated.",
         })
 
@@ -198,9 +215,9 @@ def api_metrics():
     return jsonify({
         "btc_price": data["btc_price"] if data["btc_price"] else "N/A",
         "hashrate": format_hashrate(data["hashrate"]),
-        "hashrate_raw": data["hashrate"],
+        "hashrate_raw": data["hashrate"] if data["hashrate"] is not None else 0,
         "nodes": data["node_count"] if data["node_count"] else "N/A",
-        "time": data["time_labels"][-1] if data["time_labels"] else None,
+        "time": data.get("metric_timestamps", {}).get("price"),
     })
 
 
@@ -239,36 +256,21 @@ def api_alert():
 @api.route("/api/security")
 def api_security():
     try:
-        from .security_services import (
-            get_51_attack_risk,
-            get_double_spend_attempts,
-            get_invalid_block_attempts,
-            get_reorg_events,
-        )
-        from .services import rpc_call
-        settings = _settings()
-        double_spend = get_double_spend_attempts(rpc_call, settings)
-        attack_51 = get_51_attack_risk(settings)
-        invalid_blocks = get_invalid_block_attempts(rpc_call, settings)
-        reorgs = get_reorg_events(rpc_call, settings)
-        return jsonify({
-            "double_spend": double_spend,
-            "attack_51": attack_51,
-            "invalid_blocks": invalid_blocks,
-            "reorgs": reorgs,
-        })
+        return jsonify(get_security_overview(_settings()))
     except Exception as exc:
         current_app.logger.exception("/api/security failed: %s", exc)
         return jsonify({
-            "double_spend": {"orphan_count": 0, "orphans": [], "risk_level": "unknown"},
-            "attack_51": {"pools": [], "top_pool_share": 0, "risk_level": "unknown"},
-            "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": "unknown"},
+            "double_spend": {"orphan_count": 0, "orphans": [], "risk_level": "low"},
+            "attack_51": {"pools": [], "top_pool_share": 0, "risk_level": "low"},
+            "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": "low"},
             "reorgs": {
                 "reorg_count": 0,
                 "reorgs": [],
                 "max_branch_length": 0,
-                "risk_level": "unknown",
+                "risk_level": "low",
             },
+            "updated_at": None,
+            "status": "error",
         })
 
 

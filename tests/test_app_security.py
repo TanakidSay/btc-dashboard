@@ -104,3 +104,25 @@ def test_index_records_viewer_stats(monkeypatch, tmp_path) -> None:
     viewer_response = app.test_client().get("/api/viewers")
     assert viewer_response.status_code == 200
     assert viewer_response.get_json()["total_views"] == 1
+
+
+def test_treasury_route_returns_stable_json_when_service_fails(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_btc_treasury_holdings",
+        lambda settings: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/treasury")
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "total_btc_held": "N/A",
+        "treasury_dominance_percent": "N/A",
+        "top_holders": [],
+        "source": "fallback",
+        "status": "error",
+        "updated_at": None,
+        "error": "boom",
+    }

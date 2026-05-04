@@ -16,14 +16,19 @@ if __package__:
     from .services import (
         FALLBACK_NODE_COUNT,
         MetricValue,
+        append_metric_point,
         build_table_html,
         configure_state,
         fee_spike_alert,
         format_hashrate,
         get_btc_price_result,
+        get_btc_supply_ownership,
+        get_btc_treasury_holdings,
+        get_etf_flow,
         get_fee_data,
         get_hashrate_result,
         get_node_count_result,
+        get_security_overview,
         state,
     )
 else:
@@ -33,14 +38,19 @@ else:
     from btc_dashboard.services import (
         FALLBACK_NODE_COUNT,
         MetricValue,
+        append_metric_point,
         build_table_html,
         configure_state,
         fee_spike_alert,
         format_hashrate,
         get_btc_price_result,
+        get_btc_supply_ownership,
+        get_btc_treasury_holdings,
+        get_etf_flow,
         get_fee_data,
         get_hashrate_result,
         get_node_count_result,
+        get_security_overview,
         state,
     )
 
@@ -48,80 +58,126 @@ logger = logging.getLogger(__name__)
 
 _worker_thread: threading.Thread | None = None
 _stop_event = threading.Event()
+_last_metric_refresh: dict[str, float] = {}
+_METRIC_INTERVALS = {
+    "price": 60,
+    "hashrate": 300,
+    "treasury": 300,
+    "etf": 300,
+    "network": 600,
+    "security": 600,
+}
 
 
-# -------------------------
-# CACHE WARMUP
-# -------------------------
 def warm_local_cache(settings: Settings) -> None:
     try:
         fee_data = get_fee_data(settings)
         table_html = build_table_html(fee_data, settings.max_table_rows)
+        price_metric = get_btc_price_result(settings)
+        hashrate_metric = get_hashrate_result(settings)
+        node_metric = get_node_count_result(settings)
+        get_etf_flow(settings)
+        get_btc_treasury_holdings(settings)
+        get_btc_supply_ownership(settings)
+        get_security_overview(settings)
 
         with state.lock:
             state.fee_data = fee_data.copy()
             state.table_html = table_html
+            if _val(price_metric) is not None:
+                state.btc_price = _val(price_metric)
+            if _val(hashrate_metric) is not None:
+                state.hashrate = _val(hashrate_metric)
+            if _val(node_metric) not in {None, FALLBACK_NODE_COUNT}:
+                state.node_count = _val(node_metric)
 
-        logger.info("✅ Cache warmed successfully")
+        now_iso = _utc_now_iso()
+        append_metric_point("price", state.btc_price, now_iso)
+        append_metric_point("hashrate", state.hashrate, now_iso)
+        with state.lock:
+            state.metric_timestamps["price"] = now_iso
+            state.metric_timestamps["hashrate"] = now_iso
+            state.metric_timestamps["network"] = now_iso
 
+        logger.info("Cache warmed successfully")
     except Exception:
-        logger.exception("❌ Failed to warm cache")
+        logger.exception("Failed to warm cache")
 
 
-# -------------------------
-# MAIN REFRESH
-# -------------------------
 def refresh_once(settings: Settings) -> None:
     try:
         fee_data = get_fee_data(settings)
         table_html = build_table_html(fee_data, settings.max_table_rows)
+        now_monotonic = time.monotonic()
+        now_iso = _utc_now_iso()
 
-        btc_price = get_btc_price_result(settings)
-        hashrate = get_hashrate_result(settings)
-        node_count = get_node_count_result(settings)
+        with state.lock:
+            force_price = state.btc_price is None
+            force_hashrate = state.hashrate is None
+            force_network = state.node_count in {None, FALLBACK_NODE_COUNT}
 
-        now = dt.datetime.now(dt.UTC).strftime("%H:%M:%S")
+        btc_price = get_btc_price_result(settings) if _due("price", now_monotonic, force_price) else None
+        hashrate = get_hashrate_result(settings) if _due("hashrate", now_monotonic, force_hashrate) else None
+        node_count = get_node_count_result(settings) if _due("network", now_monotonic, force_network) else None
+
+        if _due("etf", now_monotonic):
+            get_etf_flow(settings)
+            logger.info("[WORKER] ETF updated")
+        if _due("treasury", now_monotonic):
+            get_btc_treasury_holdings(settings)
+            get_btc_supply_ownership(settings)
+        if _due("security", now_monotonic):
+            get_security_overview(settings)
 
         with state.lock:
             price_val = _val(btc_price)
             hash_val = _val(hashrate)
             node_val = _val(node_count)
 
-            # fallback safety
-            state.btc_price = price_val or state.btc_price
-            state.hashrate = hash_val or state.hashrate
+            if price_val is not None:
+                state.btc_price = price_val
+                state.metric_timestamps["price"] = now_iso
+            if hash_val is not None:
+                state.hashrate = hash_val
+                state.metric_timestamps["hashrate"] = now_iso
             if node_val is not None and node_val != FALLBACK_NODE_COUNT:
                 state.node_count = node_val
+                state.metric_timestamps["network"] = now_iso
 
             state.fee_data = fee_data.copy()
             state.table_html = table_html
-
-            state.time_labels.append(now)
 
             if state.hashrate is not None:
                 state.hashrate_history.append(state.hashrate)
             if state.btc_price is not None:
                 state.price_history.append(state.btc_price)
 
+        if price_val is not None:
+            append_metric_point("price", price_val, now_iso)
+            logger.info("[WORKER] Price updated")
+        if hash_val is not None:
+            append_metric_point("hashrate", hash_val, now_iso)
+            logger.info("[WORKER] Hashrate updated")
+
         logger.info(
             "Update OK | price=%s source=%s | hashrate=%s source=%s | nodes=%s source=%s",
-            f"${price_val:,.2f}" if price_val is not None else "N/A",
-            _source(btc_price),
-            format_hashrate(hash_val),
-            _source(hashrate),
-            node_val if node_val is not None else "N/A",
-            _source(node_count),
+            f"${state.btc_price:,.2f}" if state.btc_price is not None else "N/A",
+            _source(btc_price) if btc_price is not None else "cached",
+            format_hashrate(state.hashrate),
+            _source(hashrate) if hashrate is not None else "cached",
+            state.node_count if state.node_count is not None else "N/A",
+            _source(node_count) if node_count is not None else "cached",
         )
 
         notify_fee_spike_if_needed(fee_data, settings)
-
     except Exception:
         logger.exception("refresh_once crashed")
 
 
-# -------------------------
-# HELPERS
-# -------------------------
+def _utc_now_iso() -> str:
+    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _val(metric: MetricValue | None):
     return None if metric is None else metric.value
 
@@ -130,9 +186,15 @@ def _source(metric: MetricValue | None) -> str:
     return "fallback" if metric is None else metric.source
 
 
-# -------------------------
-# ALERTS
-# -------------------------
+def _due(metric: str, now_monotonic: float, force: bool = False) -> bool:
+    last = _last_metric_refresh.get(metric)
+    interval = _METRIC_INTERVALS[metric]
+    if force or last is None or (now_monotonic - last) >= interval:
+        _last_metric_refresh[metric] = now_monotonic
+        return True
+    return False
+
+
 def notify_fee_spike_if_needed(fee_data: pd.DataFrame, settings: Settings) -> None:
     try:
         alert = fee_spike_alert(fee_data, settings.fee_spike_threshold)
@@ -157,25 +219,17 @@ def notify_fee_spike_if_needed(fee_data: pd.DataFrame, settings: Settings) -> No
             with state.lock:
                 state.last_fee_spike_notification_key = key
                 state.last_fee_spike_notification_ts = now
-
     except Exception:
         logger.exception("Alert system failed")
 
 
-# -------------------------
-# WORKER LOOP
-# -------------------------
 def background_worker(settings: Settings) -> None:
-    logger.info("🚀 Worker started (refresh=%ss)", settings.refresh_seconds)
-
+    logger.info("Worker started (refresh=%ss)", settings.refresh_seconds)
     while not _stop_event.is_set():
         refresh_once(settings)
         time.sleep(settings.refresh_seconds)
 
 
-# -------------------------
-# START / STOP
-# -------------------------
 def start_background_worker(settings: Settings) -> threading.Thread:
     global _worker_thread
 
@@ -186,27 +240,21 @@ def start_background_worker(settings: Settings) -> threading.Thread:
         return _worker_thread
 
     _stop_event.clear()
-
     _worker_thread = threading.Thread(
         target=background_worker,
         args=(settings,),
         daemon=True,
     )
-
     _worker_thread.start()
-
-    logger.info("🟢 Worker thread launched")
+    logger.info("Worker thread launched")
     return _worker_thread
 
 
 def stop_background_worker() -> None:
     _stop_event.set()
-    logger.info("🛑 Worker stop signal sent")
+    logger.info("Worker stop signal sent")
 
 
-# -------------------------
-# RUN DIRECT
-# -------------------------
 def run_worker() -> None:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 

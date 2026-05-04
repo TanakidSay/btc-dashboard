@@ -16,6 +16,7 @@ from btc_dashboard.services import (
     get_hashrate_result,
     get_node_count,
     get_node_count_result,
+    get_btc_treasury_holdings,
     get_viewer_stats,
     price_breakout_alert,
     record_view,
@@ -94,16 +95,20 @@ class FakeResponse:
         return self.payload
 
 
-def _settings(tmp_path) -> Settings:
+def _settings(tmp_path, **overrides) -> Settings:
     clear_cache()
+    values = {
+        "secret_key": "test",
+        "fee_csv_path": tmp_path / "fees.csv",
+        "viewer_stats_path": tmp_path / "viewer_stats.json",
+        "start_worker": False,
+        "bitcoin_rpc_password": "test",
+        "cache_ttl_seconds": 30,
+        "node_block_count": 2,
+    }
+    values.update(overrides)
     return Settings(
-        secret_key="test",
-        fee_csv_path=tmp_path / "fees.csv",
-        viewer_stats_path=tmp_path / "viewer_stats.json",
-        start_worker=False,
-        bitcoin_rpc_password="test",
-        cache_ttl_seconds=30,
-        node_block_count=2,
+        **values,
     )
 
 
@@ -308,3 +313,100 @@ def test_get_fee_data_falls_back_to_mempool_blocks(monkeypatch, tmp_path) -> Non
             "sat_per_vbyte": 2.0,
         }
     ]
+
+
+def test_get_btc_treasury_holdings_retries_before_success(monkeypatch, tmp_path) -> None:
+    calls = {"count": 0}
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        calls["count"] += 1
+        if calls["count"] < 3:
+            return FakeResponse(status_code=503)
+        return FakeResponse({
+            "total_holdings": 123456.78,
+            "market_cap_dominance": 0.59,
+            "companies": [
+                {
+                    "name": "Strategy",
+                    "symbol": "MSTR",
+                    "total_holdings": 555555.0,
+                    "percentage_of_total_supply": 2.64,
+                }
+            ],
+        })
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_btc_treasury_holdings(_settings(tmp_path, cache_ttl_seconds=0))
+
+    assert calls["count"] == 3
+    assert payload["status"] == "ok"
+    assert payload["source"] == "coingecko-public-treasury"
+    assert payload["updated_at"] is not None
+    assert payload["error"] is None
+    assert payload["top_holders"][0]["name"] == "Strategy"
+
+
+def test_get_btc_treasury_holdings_preserves_last_successful_value(monkeypatch, tmp_path) -> None:
+    responses = iter(
+        [
+            FakeResponse({
+                "total_holdings": 111111.0,
+                "market_cap_dominance": 0.42,
+                "companies": [
+                    {
+                        "name": "Strategy",
+                        "symbol": "MSTR",
+                        "total_holdings": 555555.0,
+                        "percentage_of_total_supply": 2.64,
+                    }
+                ],
+            }),
+            FakeResponse(status_code=503),
+            FakeResponse(status_code=503),
+            FakeResponse(status_code=503),
+            FakeResponse(status_code=503),
+            FakeResponse(status_code=503),
+            FakeResponse(status_code=503),
+        ]
+    )
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return next(responses)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services._persistent_cache_is_fresh", lambda *args: False)
+    settings = _settings(tmp_path, cache_ttl_seconds=0)
+
+    first = get_btc_treasury_holdings(settings)
+    second = get_btc_treasury_holdings(settings)
+
+    assert first["status"] == "ok"
+    assert second["status"] == "stale"
+    assert second["total_btc_held"] == first["total_btc_held"]
+    assert second["treasury_dominance_percent"] == first["treasury_dominance_percent"]
+    assert second["top_holders"] == first["top_holders"]
+    assert second["updated_at"] == first["updated_at"]
+    assert "coingecko-public-treasury" in second["error"]
+
+
+def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_btc_treasury_holdings(_settings(tmp_path, cache_ttl_seconds=0))
+
+    assert payload == {
+        "total_btc_held": "N/A",
+        "treasury_dominance_percent": "N/A",
+        "top_holders": [],
+        "source": "fallback",
+        "status": "error",
+        "updated_at": None,
+        "error": (
+            "coingecko-public-treasury: HTTP 503 | "
+            "coingecko-company-treasury: HTTP 503"
+        ),
+    }

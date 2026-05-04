@@ -5,8 +5,10 @@ import json
 import logging
 import re
 import time
+from copy import deepcopy
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from html import unescape
 from pathlib import Path
 from threading import Lock
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 API_HEADERS = {"Accept": "application/json", "User-Agent": "btc-dashboard/0.1"}
 FALLBACK_NODE_COUNT = "N/A"
+SAFE_SECURITY_RISK = "low"
 BITCOIN_MAX_SUPPLY_BTC = 21_000_000
 SATOSHI_ESTIMATED_BTC = 1_100_000
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
@@ -33,10 +36,15 @@ COINGECKO_TREASURY_URLS = (
     "https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin",
 )
 FALLBACK_ETF_FLOW = {
-    "latest_net_flow_usd": "N/A",
+    "latest_date": None,
+    "latest_net_flow_usd": 0,
+    "7d_flow": 0,
+    "trend": "neutral",
     "flow_history": [],
-    "status": "neutral",
     "source": "fallback",
+    "updated_at": None,
+    "status": "error",
+    "error": None,
 }
 SEEDED_ETF_FLOW_MILLIONS = [
     ("11 Feb 2026", -276.3),
@@ -71,15 +79,21 @@ FALLBACK_BTC_TREASURY = {
     "treasury_dominance_percent": "N/A",
     "top_holders": [],
     "source": "fallback",
+    "status": "error",
+    "updated_at": None,
+    "error": None,
 }
 FALLBACK_SUPPLY_OWNERSHIP = {
     "max_supply_btc": BITCOIN_MAX_SUPPLY_BTC,
-    "circulating_supply_btc": "N/A",
-    "known_btc": "N/A",
-    "unknown_btc": "N/A",
+    "circulating_supply_btc": 0,
+    "known_btc": 0,
+    "unknown_btc": BITCOIN_MAX_SUPPLY_BTC,
     "ownership": [],
     "top_holders": [],
     "source": "fallback",
+    "status": "error",
+    "updated_at": None,
+    "error": None,
     "note": "Bitcoin addresses are pseudonymous, so owner attribution is estimated.",
 }
 DEFAULT_VIEWER_STATS = {
@@ -107,6 +121,13 @@ class MetricValue:
 
 
 @dataclass
+class PersistentCache:
+    data: Any
+    last_updated: datetime | None = None
+    status: str = "empty"
+
+
+@dataclass
 class DashboardState:
     lock: Lock = field(default_factory=Lock)
     fee_data: pd.DataFrame | None = None
@@ -117,6 +138,9 @@ class DashboardState:
     hashrate_history: deque[float] = field(default_factory=deque)
     price_history: deque[float] = field(default_factory=deque)
     time_labels: deque[str] = field(default_factory=deque)
+    price_points: deque[dict[str, Any]] = field(default_factory=deque)
+    hashrate_points: deque[dict[str, Any]] = field(default_factory=deque)
+    metric_timestamps: dict[str, str] = field(default_factory=dict)
     last_fee_spike_notification_key: str | None = None
     last_fee_spike_notification_ts: float = 0
 
@@ -125,6 +149,17 @@ state = DashboardState()
 _cache: dict[str, CacheEntry] = {}
 _cache_lock = Lock()
 _viewer_lock = Lock()
+_treasury_cache_lock = Lock()
+_treasury_result_cache: CacheEntry | None = None
+_last_successful_treasury: dict[str, Any] | None = None
+_persistent_cache_lock = Lock()
+_persistent_caches: dict[str, PersistentCache] = {
+    "treasury_cache": PersistentCache(deepcopy(FALLBACK_BTC_TREASURY)),
+    "ownership_cache": PersistentCache(deepcopy(FALLBACK_SUPPLY_OWNERSHIP)),
+    "institutional_cache": PersistentCache({}),
+    "etf_cache": PersistentCache(deepcopy(FALLBACK_ETF_FLOW)),
+    "security_cache": PersistentCache({}),
+}
 
 
 def configure_state(settings: Settings) -> None:
@@ -132,6 +167,8 @@ def configure_state(settings: Settings) -> None:
         state.hashrate_history = deque(state.hashrate_history, maxlen=settings.max_chart_rows)
         state.price_history = deque(state.price_history, maxlen=settings.max_chart_rows)
         state.time_labels = deque(state.time_labels, maxlen=settings.max_chart_rows)
+        state.price_points = deque(state.price_points, maxlen=24 * 60)
+        state.hashrate_points = deque(state.hashrate_points, maxlen=7 * 24 * 12)
 
 
 def load_fee_data(path: Path, max_rows: int) -> pd.DataFrame:
@@ -239,8 +276,18 @@ def _cache_set(key: str, value: Any, ttl_seconds: int) -> Any:
 
 
 def clear_cache() -> None:
+    global _treasury_result_cache, _last_successful_treasury
     with _cache_lock:
         _cache.clear()
+    with _treasury_cache_lock:
+        _treasury_result_cache = None
+        _last_successful_treasury = None
+    with _persistent_cache_lock:
+        _persistent_caches["treasury_cache"] = PersistentCache(deepcopy(FALLBACK_BTC_TREASURY))
+        _persistent_caches["ownership_cache"] = PersistentCache(deepcopy(FALLBACK_SUPPLY_OWNERSHIP))
+        _persistent_caches["institutional_cache"] = PersistentCache({})
+        _persistent_caches["etf_cache"] = PersistentCache(deepcopy(FALLBACK_ETF_FLOW))
+        _persistent_caches["security_cache"] = PersistentCache({})
 
 
 def _cached(key: str, settings: Settings, loader):
@@ -260,6 +307,23 @@ def _get_json_with_headers(url: str, settings: Settings, headers: dict[str, str]
     response = session.get(url, headers=headers, timeout=settings.request_timeout)
     response.raise_for_status()
     return response.json()
+
+
+def _get_json_with_headers_retry(
+    url: str,
+    settings: Settings,
+    headers: dict[str, str],
+    attempts: int = 3,
+) -> Any:
+    last_error: Exception | None = None
+    for _ in range(attempts):
+        try:
+            return _get_json_with_headers(url, settings, headers)
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise ValueError("request attempts exhausted")
 
 
 def _get_text(url: str, settings: Settings) -> str:
@@ -479,7 +543,14 @@ def _get_btc_price_from_coingecko(settings: Settings) -> float:
 
 
 def get_etf_flow(settings: Settings) -> dict[str, Any]:
-    return _cached("etf_flow", settings, lambda: _get_etf_flow_with_fallback(settings))
+    return _cached_resource(
+        "etf_cache",
+        300,
+        lambda: _get_etf_flow_with_fallback(settings),
+        "[CACHE] ETF refreshed",
+        "[ERROR] Using cached fallback",
+        deepcopy(FALLBACK_ETF_FLOW),
+    )
 
 
 def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
@@ -490,7 +561,7 @@ def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
     farside_data = _get_etf_flow_from_farside(settings)
     if farside_data["source"] != "fallback":
         return farside_data
-    return _seeded_etf_flow_fallback()
+    raise ValueError("No fresh ETF flow source available")
 
 
 def _get_etf_flow_from_coinglass(settings: Settings) -> dict[str, Any]:
@@ -510,22 +581,7 @@ def _get_etf_flow_from_coinglass(settings: Settings) -> dict[str, Any]:
                 "close_price": _first_number(row, ("price", "closePrice", "close_price")),
             })
 
-        latest_flow = next(
-            (item["net_flow_usd"] for item in reversed(history) if item["net_flow_usd"] != "N/A"),
-            "N/A",
-        )
-        status = "neutral"
-        if isinstance(latest_flow, int | float):
-            if latest_flow > 0:
-                status = "inflow"
-            elif latest_flow < 0:
-                status = "outflow"
-        return {
-            "latest_net_flow_usd": latest_flow,
-            "flow_history": history,
-            "status": status,
-            "source": "coinglass",
-        }
+        return _normalize_etf_payload(history, "coinglass")
     except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
         logger.warning("CoinGlass ETF flow request failed: %s", exc)
         fallback = FALLBACK_ETF_FLOW.copy()
@@ -539,18 +595,7 @@ def _get_etf_flow_from_farside(settings: Settings) -> dict[str, Any]:
         rows = _parse_farside_etf_rows(html)
         if not rows:
             raise ValueError("Farside ETF flow table has no parsable rows")
-        latest_flow = rows[-1]["net_flow_usd"]
-        status = "neutral"
-        if latest_flow > 0:
-            status = "inflow"
-        elif latest_flow < 0:
-            status = "outflow"
-        return {
-            "latest_net_flow_usd": latest_flow,
-            "flow_history": rows[-30:],
-            "status": status,
-            "source": "farside",
-        }
+        return _normalize_etf_payload(rows[-30:], "farside")
     except Exception as exc:
         logger.warning("Farside ETF flow request failed: %s", exc)
         fallback = FALLBACK_ETF_FLOW.copy()
@@ -558,27 +603,27 @@ def _get_etf_flow_from_farside(settings: Settings) -> dict[str, Any]:
         return fallback
 
 
-def _seeded_etf_flow_fallback() -> dict[str, Any]:
-    history = [
-        {
-            "date": date,
-            "net_flow_usd": flow_millions * 1_000_000,
-            "close_price": None,
-        }
-        for date, flow_millions in SEEDED_ETF_FLOW_MILLIONS
-    ]
-    latest_flow = history[-1]["net_flow_usd"] if history else "N/A"
-    status = "neutral"
-    if isinstance(latest_flow, int | float):
-        if latest_flow > 0:
-            status = "inflow"
-        elif latest_flow < 0:
-            status = "outflow"
+def _normalize_etf_payload(history: list[dict[str, Any]], source: str) -> dict[str, Any]:
+    if not history:
+        raise ValueError("ETF history is empty")
+    latest_row = history[-1]
+    latest_flow = latest_row.get("net_flow_usd", 0) or 0
+    latest_date = latest_row.get("date")
+    recent_rows = history[-7:]
+    seven_day_flow = round(sum(float(row.get("net_flow_usd", 0) or 0) for row in recent_rows), 2)
+    trend = "neutral"
+    if latest_flow > 0:
+        trend = "inflow"
+    elif latest_flow < 0:
+        trend = "outflow"
     return {
+        "latest_date": latest_date,
         "latest_net_flow_usd": latest_flow,
+        "7d_flow": seven_day_flow,
+        "trend": trend,
         "flow_history": history,
-        "status": status,
-        "source": "cached farside fallback",
+        "source": source,
+        "error": None,
     }
 
 
@@ -621,7 +666,22 @@ def _parse_farside_number(value: str) -> float | None:
 
 
 def get_btc_treasury_holdings(settings: Settings) -> dict[str, Any]:
-    return _cached("btc_treasury", settings, lambda: _get_btc_treasury_with_fallback(settings))
+    payload = _cached_resource(
+        "treasury_cache",
+        300,
+        lambda: _get_btc_treasury_with_fallback(settings),
+        "[CACHE] Treasury refreshed",
+        "[CACHE] Treasury fallback used",
+        deepcopy(FALLBACK_BTC_TREASURY),
+    )
+    _set_persistent_cache("institutional_cache", {
+        "total_btc_held": payload.get("total_btc_held", 0),
+        "treasury_dominance_percent": payload.get("treasury_dominance_percent", 0),
+        "top_holders": deepcopy(payload.get("top_holders", [])),
+        "status": payload.get("status", "ok"),
+        "updated_at": payload.get("updated_at"),
+    }, payload.get("status", "ok"))
+    return payload
 
 
 def _get_btc_treasury_with_fallback(settings: Settings) -> dict[str, Any]:
@@ -629,36 +689,209 @@ def _get_btc_treasury_with_fallback(settings: Settings) -> dict[str, Any]:
     if settings.coingecko_demo_api_key:
         headers["x-cg-demo-api-key"] = settings.coingecko_demo_api_key
 
-    for url in COINGECKO_TREASURY_URLS:
-        try:
-            data = _get_json_with_headers(url, settings, headers)
-            holders = data.get("companies") or data.get("entities") or []
-            top_holders = []
-            for holder in holders[:5]:
-                top_holders.append({
-                    "name": holder.get("name", "Unknown"),
-                    "symbol": holder.get("symbol"),
-                    "btc_held": _first_number(holder, ("total_holdings", "amount")),
-                    "supply_percent": _first_number(
-                        holder,
-                        ("percentage_of_total_supply", "supply_percent"),
-                    ),
-                })
-            return {
-                "total_btc_held": data.get("total_holdings", "N/A"),
-                "treasury_dominance_percent": data.get("market_cap_dominance", "N/A"),
-                "top_holders": top_holders,
-                "source": "coingecko",
-            }
-        except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
-            logger.warning("CoinGecko treasury request failed: %s", exc)
-            continue
+    providers = (
+        ("coingecko-public-treasury", COINGECKO_TREASURY_URLS[0]),
+        ("coingecko-company-treasury", COINGECKO_TREASURY_URLS[1]),
+    )
+    errors: list[str] = []
 
-    return FALLBACK_BTC_TREASURY.copy()
+    for source_name, url in providers:
+        try:
+            data = _get_json_with_headers_retry(url, settings, headers, attempts=3)
+            payload = _normalize_treasury_payload(data, source_name)
+            if _treasury_payload_is_valid(payload):
+                return _remember_successful_treasury(payload)
+            errors.append(f"{source_name}: invalid treasury payload")
+        except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
+            logger.warning("%s treasury request failed: %s", source_name, exc)
+            errors.append(f"{source_name}: {exc}")
+            continue
+    raise RuntimeError(" | ".join(errors) if errors else "treasury source unavailable")
+
+
+def _normalize_treasury_payload(data: dict[str, Any], source: str) -> dict[str, Any]:
+    holders = data.get("companies") or data.get("entities") or []
+    top_holders = []
+    for holder in holders[:5]:
+        top_holders.append({
+            "name": holder.get("name", "Unknown"),
+            "symbol": holder.get("symbol"),
+            "btc_held": _first_number(holder, ("total_holdings", "amount")),
+            "supply_percent": _first_number(
+                holder,
+                ("percentage_of_total_supply", "supply_percent"),
+            ),
+        })
+    return _treasury_payload(
+        total_btc_held=data.get("total_holdings", "N/A"),
+        treasury_dominance_percent=data.get("market_cap_dominance", "N/A"),
+        top_holders=top_holders,
+        source=source,
+        status="ok",
+        updated_at=_utc_now_iso(),
+        error=None,
+    )
+
+
+def _treasury_payload(
+    total_btc_held: Any,
+    treasury_dominance_percent: Any,
+    top_holders: list[dict[str, Any]],
+    source: str,
+    status: str,
+    updated_at: str | None,
+    error: str | None,
+) -> dict[str, Any]:
+    return {
+        "total_btc_held": total_btc_held,
+        "treasury_dominance_percent": treasury_dominance_percent,
+        "top_holders": top_holders,
+        "source": source,
+        "status": status,
+        "updated_at": updated_at,
+        "error": error,
+    }
+
+
+def _treasury_payload_is_valid(payload: dict[str, Any]) -> bool:
+    return (
+        _to_float_or_none(payload.get("total_btc_held")) is not None
+        and isinstance(payload.get("top_holders"), list)
+        and len(payload["top_holders"]) > 0
+    )
+
+
+def _remember_successful_treasury(payload: dict[str, Any]) -> dict[str, Any]:
+    global _last_successful_treasury
+
+    normalized = _treasury_payload(
+        total_btc_held=payload.get("total_btc_held", "N/A"),
+        treasury_dominance_percent=payload.get("treasury_dominance_percent", "N/A"),
+        top_holders=deepcopy(payload.get("top_holders", [])),
+        source=str(payload.get("source", "unknown")),
+        status="ok",
+        updated_at=payload.get("updated_at") or _utc_now_iso(),
+        error=None,
+    )
+    with _treasury_cache_lock:
+        _last_successful_treasury = deepcopy(normalized)
+    return normalized
+
+
+def _utc_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _utc_now_dt() -> datetime:
+    return datetime.now(UTC)
+
+
+def _persistent_cache_is_fresh(cache_name: str, ttl_seconds: int) -> bool:
+    with _persistent_cache_lock:
+        cache = _persistent_caches[cache_name]
+        return (
+            cache.last_updated is not None
+            and (_utc_now_dt() - cache.last_updated) < timedelta(seconds=ttl_seconds)
+        )
+
+
+def _persistent_cache_value(cache_name: str) -> Any:
+    with _persistent_cache_lock:
+        return deepcopy(_persistent_caches[cache_name].data)
+
+
+def _persistent_cache_updated_at(cache_name: str) -> str | None:
+    with _persistent_cache_lock:
+        ts = _persistent_caches[cache_name].last_updated
+    return ts.isoformat().replace("+00:00", "Z") if ts else None
+
+
+def _set_persistent_cache(cache_name: str, data: Any, status: str = "ok") -> Any:
+    with _persistent_cache_lock:
+        _persistent_caches[cache_name] = PersistentCache(
+            data=deepcopy(data),
+            last_updated=_utc_now_dt(),
+            status=status,
+        )
+    return deepcopy(data)
+
+
+def _cached_resource(
+    cache_name: str,
+    ttl_seconds: int,
+    refresh_fn,
+    refresh_log: str,
+    fallback_log: str,
+    safe_fallback: dict[str, Any],
+) -> dict[str, Any]:
+    if _persistent_cache_is_fresh(cache_name, ttl_seconds):
+        cached = _persistent_cache_value(cache_name)
+        cached.setdefault("updated_at", _persistent_cache_updated_at(cache_name))
+        cached.setdefault("status", "ok")
+        return cached
+
+    try:
+        refreshed = refresh_fn()
+        refreshed["updated_at"] = _utc_now_iso()
+        refreshed["status"] = "ok"
+        _set_persistent_cache(cache_name, refreshed, "ok")
+        logger.info(refresh_log)
+        return deepcopy(refreshed)
+    except Exception as exc:
+        logger.warning("[ERROR] Using cached fallback: %s", exc)
+        cached = _persistent_cache_value(cache_name)
+        if cached and _persistent_caches[cache_name].last_updated is not None:
+            cached["status"] = "stale"
+            cached["updated_at"] = cached.get("updated_at") or _persistent_cache_updated_at(cache_name)
+            cached["error"] = str(exc)
+            logger.info(fallback_log)
+            return cached
+        fallback = deepcopy(safe_fallback)
+        fallback["status"] = "error"
+        fallback["updated_at"] = None
+        fallback["error"] = str(exc)
+        logger.info(fallback_log)
+        return fallback
+
+
+def append_metric_point(kind: str, value: float | None, timestamp: str | None = None) -> None:
+    if value is None:
+        return
+    stamp = timestamp or _utc_now_iso()
+    with state.lock:
+        points = state.price_points if kind == "price" else state.hashrate_points
+        if points and points[-1]["timestamp"] == stamp:
+            points[-1]["value"] = value
+        else:
+            points.append({"timestamp": stamp, "value": value})
+        state.metric_timestamps[kind] = stamp
+
+
+def safe_security_payload() -> dict[str, Any]:
+    return {
+        "double_spend": {"orphan_count": 0, "orphans": [], "risk_level": SAFE_SECURITY_RISK},
+        "attack_51": {
+            "pools": [],
+            "top_pool_share": 0,
+            "risk_level": SAFE_SECURITY_RISK,
+            "status": "safe fallback",
+        },
+        "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": SAFE_SECURITY_RISK},
+        "reorgs": {"reorg_count": 0, "reorgs": [], "max_branch_length": 0, "risk_level": SAFE_SECURITY_RISK},
+        "updated_at": None,
+        "status": "error",
+    }
 
 
 def get_btc_supply_ownership(settings: Settings) -> dict[str, Any]:
-    return _cached("btc_supply_ownership", settings, lambda: _get_btc_supply_ownership(settings))
+    return _cached_resource(
+        "ownership_cache",
+        300,
+        lambda: _get_btc_supply_ownership(settings),
+        "[CACHE] Ownership refreshed",
+        "[CACHE] Ownership fallback used",
+        deepcopy(FALLBACK_SUPPLY_OWNERSHIP),
+    )
 
 
 def _get_btc_supply_ownership(settings: Settings) -> dict[str, Any]:
@@ -688,7 +921,7 @@ def _get_btc_supply_ownership(settings: Settings) -> dict[str, Any]:
             "Unattributed wallets, exchanges, miners, lost coins and individuals",
             unknown_btc,
             "on-chain unattributed",
-            "unknown",
+            "estimated",
         ))
 
         return {
@@ -699,6 +932,7 @@ def _get_btc_supply_ownership(settings: Settings) -> dict[str, Any]:
             "ownership": ownership,
             "top_holders": treasury.get("top_holders", []),
             "source": "coingecko + estimates",
+            "error": None,
             "note": "Bitcoin ownership is estimated because addresses are pseudonymous.",
         }
     except Exception as exc:
@@ -930,6 +1164,88 @@ def build_alerts(
     return alerts
 
 
+def get_security_overview(settings: Settings) -> dict[str, Any]:
+    if _persistent_cache_is_fresh("security_cache", settings.cache_ttl_seconds):
+        cached = _persistent_cache_value("security_cache")
+        cached["updated_at"] = _persistent_cache_updated_at("security_cache")
+        return cached
+
+    try:
+        from .security_services import (
+            get_51_attack_risk,
+            get_double_spend_attempts,
+            get_invalid_block_attempts,
+            get_reorg_events,
+        )
+
+        payload = {
+            "double_spend": _sanitize_security_metric(
+                get_double_spend_attempts(rpc_call, settings),
+                {"orphan_count": 0, "orphans": []},
+            ),
+            "attack_51": _sanitize_attack_risk(get_51_attack_risk(settings)),
+            "invalid_blocks": _sanitize_security_metric(
+                get_invalid_block_attempts(rpc_call, settings),
+                {"invalid_count": 0, "invalid_chains": []},
+            ),
+            "reorgs": _sanitize_security_metric(
+                get_reorg_events(rpc_call, settings),
+                {"reorg_count": 0, "reorgs": [], "max_branch_length": 0},
+            ),
+            "updated_at": _utc_now_iso(),
+            "status": "ok",
+        }
+        _set_persistent_cache("security_cache", payload, "ok")
+        return payload
+    except Exception as exc:
+        logger.warning("[ERROR] Using cached fallback: %s", exc)
+        cached = _persistent_cache_value("security_cache")
+        if cached:
+            cached["updated_at"] = _persistent_cache_updated_at("security_cache")
+            cached["status"] = "stale"
+            return cached
+        fallback = safe_security_payload()
+        fallback["updated_at"] = _utc_now_iso()
+        return fallback
+
+
+def _sanitize_security_metric(metric: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    payload = deepcopy(defaults)
+    payload.update(metric or {})
+    risk = normalize_risk_level(payload.get("risk_level"), SAFE_SECURITY_RISK)
+    payload["risk_level"] = risk
+    return payload
+
+
+def _sanitize_attack_risk(metric: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "pools": [],
+        "top_pool_share": 0,
+        "risk_level": SAFE_SECURITY_RISK,
+        "period": "7 days",
+    }
+    payload.update(metric or {})
+    top_share = _to_float_or_none(payload.get("top_pool_share")) or 0
+    payload["top_pool_share"] = round(top_share, 2)
+    payload["risk_level"] = attack_risk_from_share(top_share)
+    return payload
+
+
+def attack_risk_from_share(share: float) -> str:
+    if share > 30:
+        return "high"
+    if share >= 20:
+        return "medium"
+    return "low"
+
+
+def normalize_risk_level(level: Any, fallback: str = "low") -> str:
+    normalized = str(level or "").strip().lower()
+    if normalized in {"safe", "low", "medium", "high", "critical"}:
+        return "low" if normalized == "safe" else normalized
+    return fallback
+
+
 def snapshot() -> dict[str, Any]:
     with state.lock:
         fee_data = None if state.fee_data is None else state.fee_data.copy()
@@ -942,4 +1258,7 @@ def snapshot() -> dict[str, Any]:
             "hashrate_history": list(state.hashrate_history),
             "price_history": list(state.price_history),
             "time_labels": list(state.time_labels),
+            "price_points": list(state.price_points),
+            "hashrate_points": list(state.hashrate_points),
+            "metric_timestamps": dict(state.metric_timestamps),
         }
