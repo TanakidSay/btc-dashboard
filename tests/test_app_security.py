@@ -126,3 +126,27 @@ def test_treasury_route_returns_stable_json_when_service_fails(monkeypatch, tmp_
         "updated_at": None,
         "error": "boom",
     }
+
+
+def test_security_route_never_returns_null_fields(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_security_overview",
+        lambda settings: {
+            "double_spend": {"orphan_count": 0, "orphans": [], "active_height": None, "risk_level": "low"},
+            "attack_51": {"pools": [], "top_pool_share": 0, "risk_level": "low"},
+            "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": "low"},
+            "reorgs": {"reorg_count": 0, "reorgs": [], "current_height": None, "max_branch_length": 0, "risk_level": "low"},
+            "updated_at": "2026-05-04T14:23:03Z",
+            "status": "ok",
+        },
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/security")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["double_spend"]["active_height"] == 0
+    assert body["reorgs"]["current_height"] == 0
+    assert body["updated_at"] == "2026-05-04T14:23:03Z"

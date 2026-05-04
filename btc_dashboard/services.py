@@ -36,15 +36,15 @@ COINGECKO_TREASURY_URLS = (
     "https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin",
 )
 FALLBACK_ETF_FLOW = {
-    "latest_date": None,
+    "latest_date": "",
     "latest_net_flow_usd": 0,
     "7d_flow": 0,
     "trend": "neutral",
     "flow_history": [],
     "source": "fallback",
-    "updated_at": None,
+    "updated_at": "",
     "status": "error",
-    "error": None,
+    "error": "",
 }
 SEEDED_ETF_FLOW_MILLIONS = [
     ("11 Feb 2026", -276.3),
@@ -81,7 +81,7 @@ FALLBACK_BTC_TREASURY = {
     "source": "fallback",
     "status": "error",
     "updated_at": None,
-    "error": None,
+    "error": "",
 }
 FALLBACK_SUPPLY_OWNERSHIP = {
     "max_supply_btc": BITCOIN_MAX_SUPPLY_BTC,
@@ -93,7 +93,7 @@ FALLBACK_SUPPLY_OWNERSHIP = {
     "source": "fallback",
     "status": "error",
     "updated_at": None,
-    "error": None,
+    "error": "",
     "note": "Bitcoin addresses are pseudonymous, so owner attribution is estimated.",
 }
 DEFAULT_VIEWER_STATS = {
@@ -729,7 +729,7 @@ def _normalize_treasury_payload(data: dict[str, Any], source: str) -> dict[str, 
         source=source,
         status="ok",
         updated_at=_utc_now_iso(),
-        error=None,
+        error="",
     )
 
 
@@ -771,7 +771,7 @@ def _remember_successful_treasury(payload: dict[str, Any]) -> dict[str, Any]:
         source=str(payload.get("source", "unknown")),
         status="ok",
         updated_at=payload.get("updated_at") or _utc_now_iso(),
-        error=None,
+        error="",
     )
     with _treasury_cache_lock:
         _last_successful_treasury = deepcopy(normalized)
@@ -869,16 +869,28 @@ def append_metric_point(kind: str, value: float | None, timestamp: str | None = 
 
 def safe_security_payload() -> dict[str, Any]:
     return {
-        "double_spend": {"orphan_count": 0, "orphans": [], "risk_level": SAFE_SECURITY_RISK},
+        "double_spend": {
+            "orphan_count": 0,
+            "orphans": [],
+            "active_height": 0,
+            "risk_level": SAFE_SECURITY_RISK,
+        },
         "attack_51": {
             "pools": [],
             "top_pool_share": 0,
             "risk_level": SAFE_SECURITY_RISK,
             "status": "safe fallback",
+            "error": "",
         },
         "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": SAFE_SECURITY_RISK},
-        "reorgs": {"reorg_count": 0, "reorgs": [], "max_branch_length": 0, "risk_level": SAFE_SECURITY_RISK},
-        "updated_at": None,
+        "reorgs": {
+            "reorg_count": 0,
+            "reorgs": [],
+            "current_height": 0,
+            "max_branch_length": 0,
+            "risk_level": SAFE_SECURITY_RISK,
+        },
+        "updated_at": "",
         "status": "error",
     }
 
@@ -1181,7 +1193,7 @@ def get_security_overview(settings: Settings) -> dict[str, Any]:
         payload = {
             "double_spend": _sanitize_security_metric(
                 get_double_spend_attempts(rpc_call, settings),
-                {"orphan_count": 0, "orphans": []},
+                {"orphan_count": 0, "orphans": [], "active_height": 0},
             ),
             "attack_51": _sanitize_attack_risk(get_51_attack_risk(settings)),
             "invalid_blocks": _sanitize_security_metric(
@@ -1190,7 +1202,7 @@ def get_security_overview(settings: Settings) -> dict[str, Any]:
             ),
             "reorgs": _sanitize_security_metric(
                 get_reorg_events(rpc_call, settings),
-                {"reorg_count": 0, "reorgs": [], "max_branch_length": 0},
+                {"reorg_count": 0, "reorgs": [], "current_height": 0, "max_branch_length": 0},
             ),
             "updated_at": _utc_now_iso(),
             "status": "ok",
@@ -1214,6 +1226,14 @@ def _sanitize_security_metric(metric: dict[str, Any], defaults: dict[str, Any]) 
     payload.update(metric or {})
     risk = normalize_risk_level(payload.get("risk_level"), SAFE_SECURITY_RISK)
     payload["risk_level"] = risk
+    for key, value in list(payload.items()):
+        if value is None:
+            if key.endswith("_count") or key.endswith("_height") or key == "branch_len":
+                payload[key] = 0
+            elif isinstance(defaults.get(key), list):
+                payload[key] = []
+            else:
+                payload[key] = 0
     return payload
 
 

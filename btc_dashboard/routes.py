@@ -159,13 +159,13 @@ def api_etf():
     except Exception as exc:
         current_app.logger.exception("/api/etf failed: %s", exc)
         return jsonify({
-            "latest_date": None,
+            "latest_date": "",
             "latest_net_flow_usd": 0,
             "7d_flow": 0,
             "trend": "neutral",
             "flow_history": [],
             "source": "fallback",
-            "updated_at": None,
+            "updated_at": "",
             "status": "error",
             "error": str(exc),
         })
@@ -256,20 +256,25 @@ def api_alert():
 @api.route("/api/security")
 def api_security():
     try:
-        return jsonify(get_security_overview(_settings()))
+        payload = get_security_overview(_settings())
+        payload["double_spend"]["active_height"] = payload["double_spend"].get("active_height") or 0
+        payload["reorgs"]["current_height"] = payload["reorgs"].get("current_height") or 0
+        payload["updated_at"] = payload.get("updated_at") or ""
+        return jsonify(payload)
     except Exception as exc:
         current_app.logger.exception("/api/security failed: %s", exc)
         return jsonify({
-            "double_spend": {"orphan_count": 0, "orphans": [], "risk_level": "low"},
+            "double_spend": {"orphan_count": 0, "orphans": [], "active_height": 0, "risk_level": "low"},
             "attack_51": {"pools": [], "top_pool_share": 0, "risk_level": "low"},
             "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": "low"},
             "reorgs": {
                 "reorg_count": 0,
                 "reorgs": [],
+                "current_height": 0,
                 "max_branch_length": 0,
                 "risk_level": "low",
             },
-            "updated_at": None,
+            "updated_at": "",
             "status": "error",
         })
 

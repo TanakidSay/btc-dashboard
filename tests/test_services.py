@@ -343,7 +343,7 @@ def test_get_btc_treasury_holdings_retries_before_success(monkeypatch, tmp_path)
     assert payload["status"] == "ok"
     assert payload["source"] == "coingecko-public-treasury"
     assert payload["updated_at"] is not None
-    assert payload["error"] is None
+    assert payload["error"] == ""
     assert payload["top_holders"][0]["name"] == "Strategy"
 
 
