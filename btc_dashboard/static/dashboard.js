@@ -108,6 +108,51 @@ function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
+async function copyText(button, value) {
+    if (!button || !value) return;
+    try {
+        await navigator.clipboard.writeText(value);
+        const originalText = button.textContent;
+        button.textContent = "Copied";
+        window.setTimeout(() => { button.textContent = originalText; }, 1600);
+    } catch (error) {
+        console.error("Failed to copy donation value", error);
+        button.textContent = "Copy failed";
+        window.setTimeout(() => { button.textContent = "Copy"; }, 1600);
+    }
+}
+
+function initDonationBox() {
+    const qrImage = document.getElementById("lightningQrImage");
+    const qrFallback = document.getElementById("lightningQrFallback");
+    if (qrImage && qrFallback) {
+        qrImage.addEventListener("load", () => {
+            qrImage.classList.remove("hidden");
+            qrFallback.classList.add("hidden");
+        });
+        qrImage.addEventListener("error", () => {
+            qrImage.removeAttribute("src");
+            qrImage.classList.add("hidden");
+            qrFallback.classList.remove("hidden");
+            qrFallback.textContent = "Lightning QR coming soon";
+        });
+        if (qrImage.complete && qrImage.naturalWidth > 0) {
+            qrImage.classList.remove("hidden");
+            qrFallback.classList.add("hidden");
+        } else if (qrImage.complete) {
+            qrImage.classList.add("hidden");
+            qrFallback.classList.remove("hidden");
+        }
+    }
+
+    const copyButton = document.getElementById("copyBtcDonationAddress");
+    const addressEl = document.getElementById(copyButton?.dataset.copyTarget || "");
+    copyButton?.addEventListener("click", () => {
+        const address = addressEl?.textContent?.trim();
+        if (address) copyText(copyButton, address);
+    });
+}
+
 function riskClass(level) {
     const map = { safe: "risk-safe", low: "risk-low", medium: "risk-medium", high: "risk-high", critical: "risk-critical", unknown: "text-gray-400" };
     return map[level] || "text-gray-400";
@@ -691,6 +736,7 @@ async function initDashboard() {
         updateAlert(),
         updateSecurity(),
         updateFeeRecommendation(),
+        initDonationBox(),
     ]);
     setInterval(refreshDashboard, 60000);
 }
