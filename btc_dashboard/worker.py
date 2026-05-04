@@ -26,6 +26,7 @@ if __package__:
         get_btc_treasury_holdings,
         get_etf_flow,
         get_fee_data,
+        get_hashrate_chart_points,
         get_hashrate_result,
         get_node_count_result,
         get_security_overview,
@@ -48,6 +49,7 @@ else:
         get_btc_treasury_holdings,
         get_etf_flow,
         get_fee_data,
+        get_hashrate_chart_points,
         get_hashrate_result,
         get_node_count_result,
         get_security_overview,
@@ -75,6 +77,7 @@ def warm_local_cache(settings: Settings) -> None:
         table_html = build_table_html(fee_data, settings.max_table_rows)
         price_metric = get_btc_price_result(settings)
         hashrate_metric = get_hashrate_result(settings)
+        hashrate_points = get_hashrate_chart_points(settings)
         node_metric = get_node_count_result(settings)
         get_etf_flow(settings)
         get_btc_treasury_holdings(settings)
@@ -88,12 +91,18 @@ def warm_local_cache(settings: Settings) -> None:
                 state.btc_price = _val(price_metric)
             if _val(hashrate_metric) is not None:
                 state.hashrate = _val(hashrate_metric)
+            if hashrate_points:
+                state.hashrate_points.clear()
+                state.hashrate_points.extend(hashrate_points)
+                state.hashrate_history.clear()
+                state.hashrate_history.extend(point["value"] for point in hashrate_points[-settings.max_chart_rows :])
             if _val(node_metric) not in {None, FALLBACK_NODE_COUNT}:
                 state.node_count = _val(node_metric)
 
         now_iso = _utc_now_iso()
         append_metric_point("price", state.btc_price, now_iso)
-        append_metric_point("hashrate", state.hashrate, now_iso)
+        if not hashrate_points:
+            append_metric_point("hashrate", state.hashrate, now_iso)
         with state.lock:
             state.metric_timestamps["price"] = now_iso
             state.metric_timestamps["hashrate"] = now_iso

@@ -31,6 +31,7 @@ SATOSHI_ESTIMATED_BTC = 1_100_000
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/flow-history"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
+FARSIDE_BTC_ETF_LATEST_URL = "https://farside.co.uk/btc/"
 COINGECKO_TREASURY_URLS = (
     "https://api.coingecko.com/api/v3/entities/public_treasury/bitcoin",
     "https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin",
@@ -458,6 +459,37 @@ def _get_hashrate_from_mempool(settings: Settings) -> float | None:
     return float(current_hashrate) / 1e12
 
 
+def get_hashrate_chart_points(settings: Settings) -> list[dict[str, Any]]:
+    try:
+        return _get_hashrate_chart_points_from_mempool(settings)
+    except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
+        logger.warning("hashrate chart source failed: %s", exc)
+        return []
+
+
+def _get_hashrate_chart_points_from_mempool(settings: Settings) -> list[dict[str, Any]]:
+    data = _get_json("https://mempool.space/api/v1/mining/hashrate/1w", settings)
+    rows = data if isinstance(data, list) else data.get("hashrates", [])
+    points: list[dict[str, Any]] = []
+    for row in rows:
+        avg_hashrate = _first_number(row, ("avgHashrate", "hashrate", "currentHashrate"))
+        timestamp_value = row.get("timestamp") or row.get("time") or row.get("date")
+        if avg_hashrate is None or timestamp_value is None:
+            continue
+        points.append({
+            "timestamp": _normalize_timestamp(timestamp_value),
+            "value": float(avg_hashrate) / 1e12,
+        })
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for point in points:
+        if point["timestamp"] in seen:
+            continue
+        seen.add(point["timestamp"])
+        deduped.append(point)
+    return deduped[-(7 * 24 * 12):]
+
+
 def get_node_count(settings: Settings) -> int | str:
     result = get_node_count_result(settings)
     return FALLBACK_NODE_COUNT if result is None else result.value
@@ -558,9 +590,10 @@ def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
         coinglass_data = _get_etf_flow_from_coinglass(settings)
         if coinglass_data["source"] != "fallback":
             return coinglass_data
-    farside_data = _get_etf_flow_from_farside(settings)
-    if farside_data["source"] != "fallback":
-        return farside_data
+    for loader in (_get_etf_flow_from_farside_latest, _get_etf_flow_from_farside):
+        farside_data = loader(settings)
+        if farside_data["source"] != "fallback":
+            return farside_data
     raise ValueError("No fresh ETF flow source available")
 
 
@@ -592,12 +625,26 @@ def _get_etf_flow_from_coinglass(settings: Settings) -> dict[str, Any]:
 def _get_etf_flow_from_farside(settings: Settings) -> dict[str, Any]:
     try:
         html = _get_text(FARSIDE_BTC_ETF_FLOW_URL, settings)
-        rows = _parse_farside_etf_rows(html)
+        rows = _parse_farside_etf_rows(html) or _parse_farside_etf_rows_from_text(html)
         if not rows:
             raise ValueError("Farside ETF flow table has no parsable rows")
         return _normalize_etf_payload(rows[-30:], "farside")
     except Exception as exc:
         logger.warning("Farside ETF flow request failed: %s", exc)
+        fallback = FALLBACK_ETF_FLOW.copy()
+        fallback["error"] = str(exc)
+        return fallback
+
+
+def _get_etf_flow_from_farside_latest(settings: Settings) -> dict[str, Any]:
+    try:
+        html = _get_text(FARSIDE_BTC_ETF_LATEST_URL, settings)
+        rows = _parse_farside_etf_rows(html) or _parse_farside_etf_rows_from_text(html)
+        if not rows:
+            raise ValueError("Farside latest ETF page has no parsable rows")
+        return _normalize_etf_payload(rows[-30:], "farside-latest")
+    except Exception as exc:
+        logger.warning("Farside latest ETF request failed: %s", exc)
         fallback = FALLBACK_ETF_FLOW.copy()
         fallback["error"] = str(exc)
         return fallback
@@ -623,7 +670,7 @@ def _normalize_etf_payload(history: list[dict[str, Any]], source: str) -> dict[s
         "trend": trend,
         "flow_history": history,
         "source": source,
-        "error": None,
+        "error": "",
     }
 
 
@@ -645,6 +692,41 @@ def _parse_farside_etf_rows(html: str) -> list[dict[str, Any]]:
             "close_price": None,
         })
     return parsed_rows
+
+
+def _parse_farside_etf_rows_from_text(text: str) -> list[dict[str, Any]]:
+    parsed_rows = []
+    for line in text.splitlines():
+        if "|" not in line:
+            continue
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) < 2:
+            continue
+        date_value = parts[0]
+        if not re.match(r"^\d{2} [A-Z][a-z]{2} \d{4}$", date_value):
+            continue
+        total_millions = _parse_farside_number(parts[-1])
+        if total_millions is None:
+            continue
+        parsed_rows.append({
+            "date": date_value,
+            "net_flow_usd": total_millions * 1_000_000,
+            "close_price": None,
+        })
+    return parsed_rows
+
+
+def _normalize_timestamp(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        if value > 1_000_000_000_000:
+            dt_value = datetime.fromtimestamp(value / 1000, UTC)
+        else:
+            dt_value = datetime.fromtimestamp(value, UTC)
+        return dt_value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    text = str(value).strip()
+    if text.endswith("Z"):
+        return text
+    return text
 
 
 def _clean_html_cell(value: str) -> str:

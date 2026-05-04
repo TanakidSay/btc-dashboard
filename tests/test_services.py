@@ -11,13 +11,16 @@ from btc_dashboard.services import (
     format_hashrate,
     get_btc_price,
     get_btc_price_result,
+    get_etf_flow,
     get_fee_data,
     get_hashrate,
+    get_hashrate_chart_points,
     get_hashrate_result,
     get_node_count,
     get_node_count_result,
     get_btc_treasury_holdings,
     get_viewer_stats,
+    _parse_farside_etf_rows_from_text,
     price_breakout_alert,
     record_view,
 )
@@ -410,3 +413,50 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
             "coingecko-company-treasury: HTTP 503"
         ),
     }
+
+
+def test_parse_farside_etf_rows_from_text_handles_pipe_rows() -> None:
+    rows = _parse_farside_etf_rows_from_text(
+        "06 Apr 2026 | 181.9 | 147.3 | 3.8 | 118.8 | 471.4\n"
+        "07 Apr 2026 | (10.0) | 0.0 | 0.0 | 0.0 | (10.0)\n"
+    )
+
+    assert rows == [
+        {"date": "06 Apr 2026", "net_flow_usd": 471_400_000.0, "close_price": None},
+        {"date": "07 Apr 2026", "net_flow_usd": -10_000_000.0, "close_price": None},
+    ]
+
+
+def test_get_hashrate_chart_points_normalizes_mempool_history(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse({
+            "hashrates": [
+                {"timestamp": 1_710_000_000, "avgHashrate": 600_000_000_000_000_000_000},
+                {"timestamp": 1_710_003_600, "avgHashrate": 650_000_000_000_000_000_000},
+            ]
+        })
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    points = get_hashrate_chart_points(_settings(tmp_path))
+
+    assert [point["value"] for point in points] == [600_000_000.0, 650_000_000.0]
+    assert points[0]["timestamp"].endswith("Z")
+
+
+def test_get_etf_flow_uses_farside_latest_text_fallback(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk/btc/" in url:
+            return FakeResponse(text="06 Apr 2026 | 181.9 | 147.3 | 3.8 | 118.8 | 471.4")
+        if "farside.co.uk/bitcoin-etf-flow-all-data/" in url:
+            return FakeResponse(text="")
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "farside-latest"
+    assert payload["latest_date"] == "06 Apr 2026"
+    assert payload["latest_net_flow_usd"] == 471_400_000.0
+    assert payload["trend"] == "inflow"

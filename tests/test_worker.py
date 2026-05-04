@@ -6,7 +6,7 @@ import pandas as pd
 
 from btc_dashboard.config import Settings
 from btc_dashboard.services import MetricValue, state
-from btc_dashboard.worker import notify_fee_spike_if_needed, refresh_once, run_worker
+from btc_dashboard.worker import notify_fee_spike_if_needed, refresh_once, run_worker, warm_local_cache
 
 
 def _settings() -> Settings:
@@ -177,3 +177,38 @@ def test_run_worker_configures_and_starts_loop(monkeypatch, tmp_path, caplog) ->
 
     assert calls == [settings, settings]
     assert "Starting dashboard worker; refresh_seconds=7" in caplog.text
+
+
+def test_warm_local_cache_seeds_hashrate_points(monkeypatch, tmp_path) -> None:
+    settings = Settings(
+        secret_key="test",
+        fee_csv_path=tmp_path / "fees.csv",
+        start_worker=False,
+    )
+    fee_data = pd.DataFrame({"height": [100], "tx_count": [10], "sat_per_vbyte": [1.5]})
+
+    monkeypatch.setattr("btc_dashboard.worker.get_fee_data", lambda settings: fee_data)
+    monkeypatch.setattr("btc_dashboard.worker.get_btc_price_result", lambda settings: MetricValue(80000.0, "mempool.space"))
+    monkeypatch.setattr("btc_dashboard.worker.get_hashrate_result", lambda settings: MetricValue(999.0, "mempool.space"))
+    monkeypatch.setattr("btc_dashboard.worker.get_hashrate_chart_points", lambda settings: [
+        {"timestamp": "2026-05-04T14:00:00Z", "value": 990.0},
+        {"timestamp": "2026-05-04T14:05:00Z", "value": 999.0},
+    ])
+    monkeypatch.setattr("btc_dashboard.worker.get_node_count_result", lambda settings: MetricValue(17000, "bitnodes"))
+    monkeypatch.setattr("btc_dashboard.worker.get_etf_flow", lambda settings: {})
+    monkeypatch.setattr("btc_dashboard.worker.get_btc_treasury_holdings", lambda settings: {})
+    monkeypatch.setattr("btc_dashboard.worker.get_btc_supply_ownership", lambda settings: {})
+    monkeypatch.setattr("btc_dashboard.worker.get_security_overview", lambda settings: {})
+
+    with state.lock:
+        state.hashrate_points.clear()
+        state.hashrate_history.clear()
+
+    warm_local_cache(settings)
+
+    with state.lock:
+        assert list(state.hashrate_points) == [
+            {"timestamp": "2026-05-04T14:00:00Z", "value": 990.0},
+            {"timestamp": "2026-05-04T14:05:00Z", "value": 999.0},
+        ]
+        assert list(state.hashrate_history) == [990.0, 999.0]
