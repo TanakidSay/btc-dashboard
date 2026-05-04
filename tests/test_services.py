@@ -467,7 +467,8 @@ def test_etf_date_freshness_rejects_stale_scrape_dates(monkeypatch) -> None:
     monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
 
     assert _etf_date_is_recent("May 03")
-    assert _etf_date_is_recent("02 May 2026")
+    assert _etf_date_is_recent("27 Apr 2026")
+    assert not _etf_date_is_recent("26 Apr 2026")
     assert not _etf_date_is_recent("Mar 14")
 
 
