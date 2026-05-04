@@ -46,6 +46,7 @@ class Settings:
     start_worker: bool = True
     coinglass_api_key: str | None = None
     coingecko_demo_api_key: str | None = None
+    sosovalue_api_key: str | None = None
 
     @property
     def dashboard_auth_enabled(self) -> bool:
@@ -90,4 +91,5 @@ class Settings:
             ),
             coinglass_api_key=os.getenv("COINGLASS_API_KEY") or None,
             coingecko_demo_api_key=os.getenv("COINGECKO_DEMO_API_KEY") or None,
+            sosovalue_api_key=os.getenv("SOSOVALUE_API_KEY") or None,
         )

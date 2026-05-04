@@ -460,3 +460,27 @@ def test_get_etf_flow_uses_farside_latest_text_fallback(monkeypatch, tmp_path) -
     assert payload["latest_date"] == "06 Apr 2026"
     assert payload["latest_net_flow_usd"] == 471_400_000.0
     assert payload["trend"] == "inflow"
+
+
+def test_get_etf_flow_uses_sosovalue_when_api_key_is_set(monkeypatch, tmp_path) -> None:
+    def fake_post(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse({
+            "code": 0,
+            "msg": None,
+            "data": {
+                "list": [
+                    {"date": "2026-04-06", "totalNetInflow": 100000000.0},
+                    {"date": "2026-04-07", "totalNetInflow": -25000000.0},
+                ]
+            },
+        })
+
+    monkeypatch.setattr("btc_dashboard.services.session.post", fake_post)
+
+    payload = get_etf_flow(_settings(tmp_path, sosovalue_api_key="test-key"))
+
+    assert payload["source"] == "sosovalue"
+    assert payload["latest_date"] == "2026-04-07"
+    assert payload["latest_net_flow_usd"] == -25_000_000.0
+    assert payload["7d_flow"] == 75_000_000.0
+    assert payload["trend"] == "outflow"

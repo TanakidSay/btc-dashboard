@@ -30,6 +30,7 @@ BITCOIN_MAX_SUPPLY_BTC = 21_000_000
 SATOSHI_ESTIMATED_BTC = 1_100_000
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/flow-history"
+SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
 FARSIDE_BTC_ETF_LATEST_URL = "https://farside.co.uk/btc/"
 COINGECKO_TREASURY_URLS = (
@@ -310,6 +311,17 @@ def _get_json_with_headers(url: str, settings: Settings, headers: dict[str, str]
     return response.json()
 
 
+def _post_json_with_headers(
+    url: str,
+    settings: Settings,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> Any:
+    response = session.post(url, headers=headers, json=payload, timeout=settings.request_timeout)
+    response.raise_for_status()
+    return response.json()
+
+
 def _get_json_with_headers_retry(
     url: str,
     settings: Settings,
@@ -586,6 +598,10 @@ def get_etf_flow(settings: Settings) -> dict[str, Any]:
 
 
 def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
+    if settings.sosovalue_api_key:
+        soso_data = _get_etf_flow_from_sosovalue(settings)
+        if soso_data["source"] != "fallback":
+            return soso_data
     if settings.coinglass_api_key:
         coinglass_data = _get_etf_flow_from_coinglass(settings)
         if coinglass_data["source"] != "fallback":
@@ -595,6 +611,39 @@ def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
         if farside_data["source"] != "fallback":
             return farside_data
     raise ValueError("No fresh ETF flow source available")
+
+
+def _get_etf_flow_from_sosovalue(settings: Settings) -> dict[str, Any]:
+    try:
+        headers = {
+            **API_HEADERS,
+            "x-soso-api-key": settings.sosovalue_api_key,
+            "Content-Type": "application/json",
+        }
+        body = _post_json_with_headers(
+            SOSOVALUE_BTC_ETF_FLOW_URL,
+            settings,
+            headers,
+            {"type": "us-btc-spot"},
+        )
+        if body.get("code") != 0:
+            raise ValueError(body.get("msg") or "SoSoValue returned non-zero code")
+        rows = (body.get("data") or {}).get("list") or []
+        if not rows:
+            raise ValueError("SoSoValue ETF response has no rows")
+        history = []
+        for row in rows[-30:]:
+            history.append({
+                "date": row.get("date"),
+                "net_flow_usd": _first_number(row, ("totalNetInflow", "netInflow", "net_flow_usd")) or 0,
+                "close_price": None,
+            })
+        return _normalize_etf_payload(history, "sosovalue")
+    except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
+        logger.warning("SoSoValue ETF flow request failed: %s", exc)
+        fallback = FALLBACK_ETF_FLOW.copy()
+        fallback["error"] = str(exc)
+        return fallback
 
 
 def _get_etf_flow_from_coinglass(settings: Settings) -> dict[str, Any]:
@@ -653,6 +702,7 @@ def _get_etf_flow_from_farside_latest(settings: Settings) -> dict[str, Any]:
 def _normalize_etf_payload(history: list[dict[str, Any]], source: str) -> dict[str, Any]:
     if not history:
         raise ValueError("ETF history is empty")
+    history = sorted(history, key=lambda row: str(row.get("date", "")))
     latest_row = history[-1]
     latest_flow = latest_row.get("net_flow_usd", 0) or 0
     latest_date = latest_row.get("date")

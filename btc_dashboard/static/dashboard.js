@@ -76,6 +76,26 @@ function formatDateTime(value) {
     return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
+function formatChartTimeLabel(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    const now = new Date();
+    const sameYear = date.getUTCFullYear() === now.getUTCFullYear();
+    const dateLabel = date.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        ...(sameYear ? {} : { year: "numeric" }),
+    });
+    const timeLabel = date.toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+        timeZoneName: "short",
+    });
+    return `${dateLabel} ${timeLabel}`;
+}
+
 function formatMinutesAgo(value) {
     if (!value) return "Updated: N/A";
     const date = new Date(value);
@@ -324,9 +344,10 @@ async function initHashChart() {
     } catch (error) {
         console.error("Failed to initialize hashrate chart", error);
     }
+    const labels = (data.time ?? []).map(formatChartTimeLabel);
     hashChart = new Chart(document.getElementById("hashChart"), {
         type: "line",
-        data: { labels: data.time ?? [], datasets: [{ label: "Hashrate", data: data.hashrate ?? [], borderColor: "#f59e0b", backgroundColor: "rgba(245,158,11,0.12)", tension: 0.25, fill: true }] },
+        data: { labels, datasets: [{ label: "Hashrate", data: data.hashrate ?? [], borderColor: "#f59e0b", backgroundColor: "rgba(245,158,11,0.12)", tension: 0.25, fill: true }] },
         options: sharedChartOptions,
     });
 }
@@ -335,7 +356,7 @@ async function updateHashChart() {
     try {
         const data = await fetchHash();
         if (!hashChart) return;
-        hashChart.data.labels = data.time ?? [];
+        hashChart.data.labels = (data.time ?? []).map(formatChartTimeLabel);
         hashChart.data.datasets[0].data = data.hashrate ?? [];
         hashChart.update();
     } catch (error) {
