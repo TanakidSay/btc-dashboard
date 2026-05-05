@@ -11,6 +11,8 @@ def _settings(tmp_path, **overrides) -> Settings:
         "secret_key": "test-secret",
         "fee_csv_path": tmp_path / "fees.csv",
         "viewer_stats_path": tmp_path / "viewer_stats.json",
+        "x_signal_state_path": tmp_path / "x_signal_state.json",
+        "x_posted_events_path": tmp_path / "posted_events.json",
         "start_worker": False,
     }
     values.update(overrides)
@@ -133,10 +135,21 @@ def test_security_route_never_returns_null_fields(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(
         "btc_dashboard.routes.get_security_overview",
         lambda settings: {
-            "double_spend": {"orphan_count": 0, "orphans": [], "active_height": None, "risk_level": "low"},
+            "double_spend": {
+                "orphan_count": 0,
+                "orphans": [],
+                "active_height": None,
+                "risk_level": "low",
+            },
             "attack_51": {"pools": [], "top_pool_share": 0, "risk_level": "low"},
             "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": "low"},
-            "reorgs": {"reorg_count": 0, "reorgs": [], "current_height": None, "max_branch_length": 0, "risk_level": "low"},
+            "reorgs": {
+                "reorg_count": 0,
+                "reorgs": [],
+                "current_height": None,
+                "max_branch_length": 0,
+                "risk_level": "low",
+            },
             "updated_at": "2026-05-04T14:23:03Z",
             "status": "ok",
         },
@@ -176,3 +189,83 @@ def test_etf_route_returns_empty_strings_for_missing_timestamps(monkeypatch, tmp
     body = response.get_json()
     assert body["latest_date"] == ""
     assert body["updated_at"] == ""
+
+
+def test_x_status_route_reports_configuration(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, enable_x_posting=True, x_api_key="key"))
+
+    response = app.test_client().get("/api/x-status")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["enabled"] is True
+    assert body["credentials_configured"] is False
+    assert body["last_post_time"] is None
+    assert "last_error" in body
+    assert body["test_enabled"] is False
+    assert body["cooldown_remaining_seconds"] == 0
+    assert body["posted_events_count"] == 0
+    assert body["daily_post_count"] == 0
+    assert body["daily_limit_remaining"] == 12
+    assert "last_block_reason" in body
+
+
+def test_signals_policy_route(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/signals-policy")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert "whale_alert" in body["allowed_signal_types"]
+    assert body["thresholds"]["whale_btc"] == 500
+    assert body["cooldown_minutes"] == 60
+    assert body["max_posts_per_day"] == 12
+
+
+def test_x_test_post_preview_mode(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, enable_x_test_post=True, enable_x_posting=False))
+
+    response = app.test_client().post("/api/x-test-post")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["ok"] is True
+    assert body["mode"] == "preview"
+    assert "BTC Window X posting test" in body["text"]
+    assert body["last_error"] is None
+
+
+def test_x_test_post_disabled_returns_403(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, enable_x_test_post=False))
+
+    response = app.test_client().post("/api/x-test-post")
+
+    assert response.status_code == 403
+    body = response.get_json()
+    assert body["ok"] is False
+    assert body["mode"] == "error"
+
+
+def test_x_test_post_missing_credentials_does_not_crash(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(
+        _settings(
+            tmp_path,
+            enable_x_test_post=True,
+            enable_x_posting=True,
+            x_api_key="key",
+        )
+    )
+
+    response = app.test_client().post("/api/x-test-post")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["ok"] is False
+    assert body["mode"] == "error"
+    assert "X_API_SECRET" in body["last_error"]

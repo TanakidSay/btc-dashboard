@@ -32,6 +32,7 @@ if __package__:
         get_security_overview,
         state,
     )
+    from .signal_engine import process_signals
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from btc_dashboard.config import Settings
@@ -55,6 +56,7 @@ else:
         get_security_overview,
         state,
     )
+    from btc_dashboard.signal_engine import process_signals
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +97,9 @@ def warm_local_cache(settings: Settings) -> None:
                 state.hashrate_points.clear()
                 state.hashrate_points.extend(hashrate_points)
                 state.hashrate_history.clear()
-                state.hashrate_history.extend(point["value"] for point in hashrate_points[-settings.max_chart_rows :])
+                state.hashrate_history.extend(
+                    point["value"] for point in hashrate_points[-settings.max_chart_rows :]
+                )
             if _val(node_metric) not in {None, FALLBACK_NODE_COUNT}:
                 state.node_count = _val(node_metric)
 
@@ -125,9 +129,21 @@ def refresh_once(settings: Settings) -> None:
             force_hashrate = state.hashrate is None
             force_network = state.node_count in {None, FALLBACK_NODE_COUNT}
 
-        btc_price = get_btc_price_result(settings) if _due("price", now_monotonic, force_price) else None
-        hashrate = get_hashrate_result(settings) if _due("hashrate", now_monotonic, force_hashrate) else None
-        node_count = get_node_count_result(settings) if _due("network", now_monotonic, force_network) else None
+        btc_price = (
+            get_btc_price_result(settings)
+            if _due("price", now_monotonic, force_price)
+            else None
+        )
+        hashrate = (
+            get_hashrate_result(settings)
+            if _due("hashrate", now_monotonic, force_hashrate)
+            else None
+        )
+        node_count = (
+            get_node_count_result(settings)
+            if _due("network", now_monotonic, force_network)
+            else None
+        )
 
         if _due("etf", now_monotonic):
             get_etf_flow(settings)
@@ -179,6 +195,7 @@ def refresh_once(settings: Settings) -> None:
         )
 
         notify_fee_spike_if_needed(fee_data, settings)
+        process_signals(settings)
     except Exception:
         logger.exception("refresh_once crashed")
 

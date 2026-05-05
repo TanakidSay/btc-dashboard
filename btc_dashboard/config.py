@@ -44,6 +44,14 @@ class Settings:
     price_breakout_lookback: int = 10
     notification_webhook_url: str | None = None
     notification_cooldown_seconds: int = 300
+    enable_x_posting: bool = False
+    enable_x_test_post: bool = False
+    x_api_key: str | None = None
+    x_api_secret: str | None = None
+    x_access_token: str | None = None
+    x_access_secret: str | None = None
+    x_signal_state_path: Path = BASE_DIR / "data/x_signal_state.json"
+    x_posted_events_path: Path = BASE_DIR / "data/posted_events.json"
     start_worker: bool = True
     coinglass_api_key: str | None = None
     coingecko_demo_api_key: str | None = None
@@ -67,6 +75,12 @@ class Settings:
         viewer_stats_path = Path(os.getenv("VIEWER_STATS_FILE", "data/viewer_stats.json"))
         if not viewer_stats_path.is_absolute():
             viewer_stats_path = BASE_DIR / viewer_stats_path
+        x_signal_state_path = Path(os.getenv("X_SIGNAL_STATE_FILE", "data/x_signal_state.json"))
+        if not x_signal_state_path.is_absolute():
+            x_signal_state_path = BASE_DIR / x_signal_state_path
+        x_posted_events_path = Path(os.getenv("X_POSTED_EVENTS_FILE", "data/posted_events.json"))
+        if not x_posted_events_path.is_absolute():
+            x_posted_events_path = BASE_DIR / x_posted_events_path
 
         return cls(
             secret_key=os.getenv("SECRET_KEY", "dev-only-change-me"),
@@ -87,6 +101,14 @@ class Settings:
             whale_alert_threshold_btc=float(os.getenv("WHALE_ALERT_THRESHOLD_BTC", "100")),
             notification_webhook_url=os.getenv("NOTIFICATION_WEBHOOK_URL") or None,
             notification_cooldown_seconds=int(os.getenv("NOTIFICATION_COOLDOWN_SECONDS", "300")),
+            enable_x_posting=_bool_from_env("ENABLE_X_POSTING", False),
+            enable_x_test_post=_bool_from_env("ENABLE_X_TEST_POST", False),
+            x_api_key=os.getenv("X_API_KEY") or None,
+            x_api_secret=os.getenv("X_API_SECRET") or None,
+            x_access_token=os.getenv("X_ACCESS_TOKEN") or None,
+            x_access_secret=os.getenv("X_ACCESS_SECRET") or None,
+            x_signal_state_path=x_signal_state_path,
+            x_posted_events_path=x_posted_events_path,
             start_worker=_bool_from_env(
                 "START_WORKER",
                 _bool_from_env("DASHBOARD_START_WORKER", True),

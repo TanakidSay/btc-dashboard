@@ -8,6 +8,8 @@ venv/
 .env
 instance/
 logs/
+data/x_signal_state.json
+data/posted_events.json
 pytest-of-*/
 tmp*
 prompt.txt

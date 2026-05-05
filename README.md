@@ -155,6 +155,17 @@ BITCOIN_RPC_USER=bitcoinuser
 BITCOIN_RPC_PASSWORD=
 ```
 
+Optional X posting variables for Railway:
+
+```env
+ENABLE_X_POSTING=false
+ENABLE_X_TEST_POST=false
+X_API_KEY=
+X_API_SECRET=
+X_ACCESS_TOKEN=
+X_ACCESS_SECRET=
+```
+
 For Railway:
 
 1. Push this repo to GitHub.

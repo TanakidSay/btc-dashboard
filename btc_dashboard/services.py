@@ -5,8 +5,8 @@ import json
 import logging
 import re
 import time
-from copy import deepcopy
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from html import unescape
@@ -666,7 +666,9 @@ def _get_etf_flow_from_sosovalue(settings: Settings) -> dict[str, Any]:
         for row in rows[-30:]:
             history.append({
                 "date": row.get("date"),
-                "net_flow_usd": _first_number(row, ("totalNetInflow", "netInflow", "net_flow_usd")) or 0,
+                "net_flow_usd": (
+                    _first_number(row, ("totalNetInflow", "netInflow", "net_flow_usd")) or 0
+                ),
                 "close_price": None,
             })
         return _normalize_etf_payload(history, "sosovalue")
@@ -1177,7 +1179,9 @@ def _cached_resource(
         cached = _persistent_cache_value(cache_name)
         if cached and _persistent_caches[cache_name].last_updated is not None:
             cached["status"] = "stale"
-            cached["updated_at"] = cached.get("updated_at") or _persistent_cache_updated_at(cache_name)
+            cached["updated_at"] = cached.get("updated_at") or _persistent_cache_updated_at(
+                cache_name,
+            )
             cached["error"] = str(exc)
             logger.info(fallback_log)
             return cached
@@ -1217,7 +1221,11 @@ def safe_security_payload() -> dict[str, Any]:
             "status": "safe fallback",
             "error": "",
         },
-        "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": SAFE_SECURITY_RISK},
+        "invalid_blocks": {
+            "invalid_count": 0,
+            "invalid_chains": [],
+            "risk_level": SAFE_SECURITY_RISK,
+        },
         "reorgs": {
             "reorg_count": 0,
             "reorgs": [],

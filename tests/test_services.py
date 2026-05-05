@@ -7,12 +7,19 @@ import requests
 
 from btc_dashboard.config import Settings
 from btc_dashboard.services import (
+    _etf_date_is_recent,
+    _extract_globalcoinguide_date,
+    _extract_millions_flow,
+    _extract_walletpilot_date,
+    _parse_farside_etf_rows_from_text,
+    _parse_farside_latest_rows,
     build_alerts,
     clear_cache,
     fee_spike_alert,
     format_hashrate,
     get_btc_price,
     get_btc_price_result,
+    get_btc_treasury_holdings,
     get_etf_flow,
     get_fee_data,
     get_hashrate,
@@ -20,15 +27,8 @@ from btc_dashboard.services import (
     get_hashrate_result,
     get_node_count,
     get_node_count_result,
-    get_btc_treasury_holdings,
     get_recent_whale_transactions,
     get_viewer_stats,
-    _etf_date_is_recent,
-    _extract_millions_flow,
-    _extract_walletpilot_date,
-    _extract_globalcoinguide_date,
-    _parse_farside_etf_rows_from_text,
-    _parse_farside_latest_rows,
     price_breakout_alert,
     record_view,
     whale_transaction_alert,
@@ -521,7 +521,10 @@ def test_extract_etf_scrape_values_from_public_pages() -> None:
 
 
 def test_etf_date_freshness_rejects_stale_scrape_dates(monkeypatch) -> None:
-    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
 
     assert _etf_date_is_recent("May 03")
     assert _etf_date_is_recent("27 Apr 2026")
@@ -544,7 +547,10 @@ def test_get_etf_flow_uses_walletpilot_public_fallback(monkeypatch, tmp_path) ->
         return FakeResponse(status_code=503)
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
-    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
 
     payload = get_etf_flow(_settings(tmp_path))
 
@@ -570,7 +576,10 @@ def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path
         return FakeResponse(status_code=503)
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
-    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
 
     payload = get_etf_flow(_settings(tmp_path))
 
@@ -580,12 +589,15 @@ def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path
     assert payload["7d_flow"] == 2_100_000_000.0
 
 
-def test_get_etf_flow_uses_recent_seeded_fallback_when_live_sources_fail(monkeypatch, tmp_path) -> None:
+def test_get_etf_flow_uses_recent_seeded_fallback(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
         return FakeResponse(status_code=503)
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
-    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
 
     payload = get_etf_flow(_settings(tmp_path))
 
@@ -602,7 +614,10 @@ def test_get_etf_flow_rejects_seeded_fallback_when_seed_is_too_old(monkeypatch, 
         return FakeResponse(status_code=503)
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
-    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 20, tzinfo=UTC))
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 20, tzinfo=UTC),
+    )
 
     payload = get_etf_flow(_settings(tmp_path))
 
@@ -638,7 +653,10 @@ def test_get_etf_flow_uses_farside_latest_text_fallback(monkeypatch, tmp_path) -
         return FakeResponse(status_code=503)
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
-    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
 
     payload = get_etf_flow(_settings(tmp_path))
 
@@ -662,7 +680,10 @@ def test_get_etf_flow_uses_sosovalue_when_api_key_is_set(monkeypatch, tmp_path) 
         })
 
     monkeypatch.setattr("btc_dashboard.services.session.post", fake_post)
-    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: datetime(2026, 5, 4, tzinfo=UTC))
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
 
     payload = get_etf_flow(_settings(tmp_path, sosovalue_api_key="test-key"))
 

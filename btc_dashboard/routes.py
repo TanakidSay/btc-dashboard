@@ -16,8 +16,14 @@ from .services import (
     record_view,
     snapshot,
 )
+from .signal_engine import latest_signals, signals_policy
+from .x_poster import get_x_status, post_to_x
 
 api = Blueprint("api", __name__)
+X_TEST_POST_TEXT = (
+    "BTC Window X posting test ✅ Signal engine is connected. "
+    "https://btcwindow.up.railway.app/"
+)
 
 
 def _settings() -> Settings:
@@ -117,7 +123,13 @@ def api_hashrate():
         })
     except Exception as exc:
         current_app.logger.exception("/api/hashrate failed: %s", exc)
-        return jsonify({"time": [], "hashrate": [], "latest": "N/A", "latest_raw": 0, "updated_at": None})
+        return jsonify({
+            "time": [],
+            "hashrate": [],
+            "latest": "N/A",
+            "latest_raw": 0,
+            "updated_at": None,
+        })
 
 
 @api.route("/api/price")
@@ -135,7 +147,13 @@ def api_price():
         })
     except Exception as exc:
         current_app.logger.exception("/api/price failed: %s", exc)
-        return jsonify({"time": [], "price": [], "latest": "N/A", "price_usd": "N/A", "updated_at": None})
+        return jsonify({
+            "time": [],
+            "price": [],
+            "latest": "N/A",
+            "price_usd": "N/A",
+            "updated_at": None,
+        })
 
 
 @api.route("/api/network")
@@ -261,6 +279,82 @@ def api_alert():
         return jsonify({"alert": None, "alerts": []})
 
 
+@api.route("/api/signals")
+def api_signals():
+    try:
+        return jsonify(latest_signals(_settings()))
+    except Exception as exc:
+        current_app.logger.exception("/api/signals failed: %s", exc)
+        return jsonify({
+            "signals": [],
+            "x_posting_enabled": False,
+            "cooldown_seconds": 3600,
+            "dashboard_url": "https://btcwindow.up.railway.app/",
+            "post_state": {"posted_key_count": 0, "last_normal_posted_at": 0, "last_post": None},
+            "error": str(exc),
+        })
+
+
+@api.route("/api/x-status")
+def api_x_status():
+    try:
+        return jsonify(get_x_status(_settings()))
+    except Exception as exc:
+        current_app.logger.exception("/api/x-status failed: %s", exc)
+        return jsonify({
+            "enabled": False,
+            "test_enabled": False,
+            "credentials_configured": False,
+            "last_post_time": None,
+            "last_error": str(exc),
+            "cooldown_remaining_seconds": 0,
+            "daily_post_count": 0,
+            "daily_limit_remaining": 0,
+            "last_block_reason": str(exc),
+            "posted_events_count": 0,
+        })
+
+
+@api.route("/api/x-test-post", methods=["POST"])
+def api_x_test_post():
+    settings = _settings()
+    if not settings.enable_x_test_post:
+        return jsonify({
+            "ok": False,
+            "mode": "error",
+            "text": X_TEST_POST_TEXT,
+            "last_post_time": get_x_status(settings)["last_post_time"],
+            "last_error": "X test posting is disabled",
+        }), 403
+
+    result = post_to_x(
+        X_TEST_POST_TEXT,
+        settings,
+        event_id="manual:x-test-post",
+        signal_type="manual_test",
+        bypass_cooldown=True,
+    )
+    status = get_x_status(settings)
+    if result.posted:
+        mode = "posted"
+    elif result.reason == "x_posting_disabled":
+        mode = "preview"
+    else:
+        mode = "error"
+    return jsonify({
+        "ok": result.posted or mode == "preview",
+        "mode": mode,
+        "text": X_TEST_POST_TEXT,
+        "last_post_time": status["last_post_time"],
+        "last_error": status["last_error"],
+    })
+
+
+@api.route("/api/signals-policy")
+def api_signals_policy():
+    return jsonify(signals_policy())
+
+
 @api.route("/api/security")
 def api_security():
     try:
@@ -272,7 +366,12 @@ def api_security():
     except Exception as exc:
         current_app.logger.exception("/api/security failed: %s", exc)
         return jsonify({
-            "double_spend": {"orphan_count": 0, "orphans": [], "active_height": 0, "risk_level": "low"},
+            "double_spend": {
+                "orphan_count": 0,
+                "orphans": [],
+                "active_height": 0,
+                "risk_level": "low",
+            },
             "attack_51": {"pools": [], "top_pool_share": 0, "risk_level": "low"},
             "invalid_blocks": {"invalid_count": 0, "invalid_chains": [], "risk_level": "low"},
             "reorgs": {
