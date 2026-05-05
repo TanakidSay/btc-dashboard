@@ -239,11 +239,37 @@ def test_x_test_post_preview_mode(monkeypatch, tmp_path) -> None:
     assert body["last_error"] is None
 
 
+def test_x_test_post_get_preview_mode(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, enable_x_test_post=True, enable_x_posting=False))
+
+    response = app.test_client().get("/api/x-test-post")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["ok"] is True
+    assert body["mode"] == "preview"
+    assert "BTC Window X posting test" in body["text"]
+    assert body["last_error"] is None
+
+
 def test_x_test_post_disabled_returns_403(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path, enable_x_test_post=False))
 
     response = app.test_client().post("/api/x-test-post")
+
+    assert response.status_code == 403
+    body = response.get_json()
+    assert body["ok"] is False
+    assert body["mode"] == "error"
+
+
+def test_x_test_post_get_disabled_returns_403(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, enable_x_test_post=False))
+
+    response = app.test_client().get("/api/x-test-post")
 
     assert response.status_code == 403
     body = response.get_json()

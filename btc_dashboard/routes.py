@@ -315,7 +315,7 @@ def api_x_status():
         })
 
 
-@api.route("/api/x-test-post", methods=["POST"])
+@api.route("/api/x-test-post", methods=["GET", "POST"])
 def api_x_test_post():
     settings = _settings()
     if not settings.enable_x_test_post:
