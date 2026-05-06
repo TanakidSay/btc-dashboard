@@ -591,23 +591,24 @@ function renderSupplyOwnership(data) {
                 </div>
                 <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-400 sm:grid-cols-4">
                     <span>${formatOwnershipBtc(row)}</span>
-                    <span>${escapeHtml(row.source_type ?? row.source ?? "unknown")}</span>
-                    <span class="${confidenceClass(row.confidence)}">${escapeHtml(row.confidence ?? "low")} confidence</span>
-                    <span>${row.estimated ? "Estimated" : escapeHtml(row.status_label ?? "Live")}</span>
+                    <span>${escapeHtml(row.source_type ?? row.source ?? "Estimating")}</span>
+                    <span class="${confidenceClass(row.confidence_level ?? row.confidence)}">${escapeHtml(row.confidence ?? "approximate")}</span>
+                    <span>${escapeHtml(row.status_label ?? (row.estimated ? "Estimated" : "Live"))}</span>
                 </div>
             </div>`).join("")
         : `<p class="text-gray-500">Ownership data unavailable.</p>`;
 }
 
 function formatOwnershipBtc(row) {
+    if (row.display_btc) return row.display_btc;
     if (row.btc !== undefined && row.btc !== null) return formatBtc(row.btc);
     if (row.btc_range) return `${formatBtc(row.btc_range.low)} - ${formatBtc(row.btc_range.high)}`;
-    return "N/A";
+    return "Limited visibility";
 }
 
 function confidenceClass(confidence) {
-    if (confidence === "high") return "text-green-400";
-    if (confidence === "medium") return "text-amber-300";
+    if (confidence === "high" || confidence === "verified/public filings") return "text-green-400";
+    if (confidence === "medium" || confidence === "research estimate") return "text-amber-300";
     return "text-gray-500";
 }
 
@@ -618,14 +619,14 @@ async function initSupplyOwnershipChart() {
     } catch (error) {
         console.error("Failed to initialize BTC supply ownership", error);
     }
-    const ownership = (data.categories ?? data.ownership ?? []).filter((row) => Number.isFinite(Number(row.btc)));
+    const ownership = (data.chart_categories ?? data.categories ?? data.ownership ?? []).filter((row) => Number.isFinite(Number(row.btc)));
     supplyOwnershipChart = new Chart(document.getElementById("supplyOwnershipChart"), {
         type: "doughnut",
         data: {
             labels: ownership.map((row) => row.name ?? row.label),
             datasets: [{
                 data: ownership.map((row) => row.btc),
-                backgroundColor: ["#f59e0b", "#38bdf8", "#22c55e", "#64748b"],
+                backgroundColor: ["#f59e0b", "#38bdf8", "#22c55e", "#a78bfa", "#fb7185", "#14b8a6", "#64748b"],
                 borderColor: "#111827",
                 borderWidth: 3,
             }],
@@ -665,7 +666,7 @@ async function updateInstitutionalMetrics() {
 async function updateSupplyOwnership() {
     try {
         const data = await fetchSupplyOwnership();
-        const ownership = (data.categories ?? data.ownership ?? []).filter((row) => Number.isFinite(Number(row.btc)));
+        const ownership = (data.chart_categories ?? data.categories ?? data.ownership ?? []).filter((row) => Number.isFinite(Number(row.btc)));
         if (supplyOwnershipChart) {
             supplyOwnershipChart.data.labels = ownership.map((row) => row.name ?? row.label);
             supplyOwnershipChart.data.datasets[0].data = ownership.map((row) => row.btc);

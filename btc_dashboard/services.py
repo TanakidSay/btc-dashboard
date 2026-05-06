@@ -40,6 +40,10 @@ SAFE_SECURITY_RISK = "low"
 BITCOIN_MAX_SUPPLY_BTC = 21_000_000
 SATOSHI_ESTIMATED_BTC = 1_100_000
 LOST_BTC_ESTIMATE_RANGE = {"low": 3_000_000, "high": 4_000_000}
+ETF_FUNDS_ESTIMATED_BTC = 1_400_000
+GOVERNMENTS_ESTIMATED_BTC = 530_000
+EXCHANGES_ESTIMATED_BTC = 2_200_000
+MINERS_ESTIMATED_BTC = 1_800_000
 ETF_MAX_AGE_DAYS = 7
 SATS_PER_BTC = 100_000_000
 BTC_PRICE_TTL_SECONDS = 5
@@ -1301,43 +1305,48 @@ def _build_ownership_payload(
         ),
         _ownership_category(
             "ETFs / funds",
-            None,
+            ETF_FUNDS_ESTIMATED_BTC,
             circulating_supply,
-            "Live unavailable",
+            "Approximate ETF/fund custody estimate",
             "low",
-            False,
+            True,
+            approximate=True,
         ),
         _ownership_category(
             "Public companies / treasuries",
             treasury_btc,
             circulating_supply,
-            "Live" if treasury_btc is not None else "Live unavailable",
+            "Live" if treasury_btc is not None else "Limited visibility",
             "high" if treasury_btc is not None else "low",
-            False,
+            treasury_btc is None,
+            approximate=treasury_btc is None,
         ),
         _ownership_category(
             "Governments / seized BTC",
-            None,
+            GOVERNMENTS_ESTIMATED_BTC,
             circulating_supply,
-            "Live unavailable",
+            "Approximate public/seized BTC estimate",
             "low",
-            False,
+            True,
+            approximate=True,
         ),
         _ownership_category(
             "Exchanges / custodians",
-            None,
+            EXCHANGES_ESTIMATED_BTC,
             circulating_supply,
-            "On-chain inferred unavailable",
+            "On-chain estimate",
             "low",
-            False,
+            True,
+            approximate=True,
         ),
         _ownership_category(
             "Miners",
-            None,
+            MINERS_ESTIMATED_BTC,
             circulating_supply,
-            "On-chain inferred unavailable",
+            "On-chain estimate",
             "low",
-            False,
+            True,
+            approximate=True,
         ),
         _ownership_category(
             "Lost coins estimate",
@@ -1352,26 +1361,32 @@ def _build_ownership_payload(
             "Retail / unattributed supply",
             _round_estimate(
                 max(
-                    circulating_supply - SATOSHI_ESTIMATED_BTC - LOST_BTC_ESTIMATE_RANGE["high"],
+                    circulating_supply
+                    - SATOSHI_ESTIMATED_BTC
+                    - LOST_BTC_ESTIMATE_RANGE["high"]
+                    - ETF_FUNDS_ESTIMATED_BTC
+                    - GOVERNMENTS_ESTIMATED_BTC
+                    - EXCHANGES_ESTIMATED_BTC
+                    - MINERS_ESTIMATED_BTC
+                    - (treasury_btc or 0),
                     0,
                 )
             ),
             circulating_supply,
-            "On-chain inferred",
+            "Limited visibility",
             "low",
             True,
+            approximate=True,
         ),
     ]
 
-    insights = [
-        f"Only {_format_btc_compact(remaining_to_mine)} BTC left to mine",
-        "Estimated lost coins reduce effective supply",
-        "Institutional custody continues growing",
-        (
-            "Unattributed ownership remains the largest category because "
-            "Bitcoin addresses are pseudonymous"
-        ),
-    ]
+    insights = _ownership_insights(
+        remaining_to_mine,
+        liquid_low,
+        liquid_high,
+        treasury_btc,
+        categories,
+    )
 
     return {
         "circulating_supply": round(circulating_supply, 8),
@@ -1384,6 +1399,7 @@ def _build_ownership_payload(
             "high": round(liquid_high, 2),
         },
         "categories": categories,
+        "chart_categories": _ownership_chart_categories(categories),
         "insights": insights,
         "updated_at": _utc_now_iso(),
         "status": status,
@@ -1405,6 +1421,7 @@ def _ownership_category(
     confidence: str,
     estimated: bool,
     btc_range: dict[str, int] | None = None,
+    approximate: bool = False,
 ) -> dict[str, Any]:
     percent = None if btc is None else round((float(btc) / circulating_supply) * 100, 2)
     return {
@@ -1416,10 +1433,78 @@ def _ownership_category(
         "percent_of_circulating_supply": percent,
         "source_type": source_type,
         "source": source_type,
-        "confidence": confidence,
+        "confidence": _confidence_label(confidence),
+        "confidence_level": confidence,
         "estimated": estimated,
+        "approximate": approximate,
         "status_label": _status_label(source_type, estimated),
+        "display_btc": _display_btc(btc, btc_range, approximate),
     }
+
+
+def _ownership_insights(
+    remaining_to_mine: float,
+    liquid_low: float,
+    liquid_high: float,
+    treasury_btc: float | None,
+    categories: list[dict[str, Any]],
+) -> list[str]:
+    visible_categories = [
+        row
+        for row in categories
+        if row.get("btc") is not None and row["name"] != "Retail / unattributed supply"
+    ]
+    largest = max(visible_categories, key=lambda row: float(row["btc"]), default=None)
+    insights = [
+        f"Mining scarcity: about {_format_btc_compact(remaining_to_mine)} BTC remain.",
+        (
+            "Lost-coin research implies effective liquid supply could be "
+            f"~{_format_btc_compact(liquid_low)} to ~{_format_btc_compact(liquid_high)} BTC."
+        ),
+    ]
+    if treasury_btc is None:
+        insights.append("Public treasury totals are estimating until live filings data refreshes.")
+    else:
+        insights.append(
+            f"Public treasuries report {_format_btc_compact(treasury_btc)} BTC in visible custody."
+        )
+    if largest:
+        insights.append(
+            f"{largest['name']} is the largest non-retail ownership bucket currently shown."
+        )
+    return insights
+
+
+def _confidence_label(confidence: str) -> str:
+    labels = {
+        "high": "verified/public filings",
+        "medium": "research estimate",
+        "low": "approximate",
+    }
+    return labels.get(confidence, "approximate")
+
+
+def _display_btc(
+    btc: float | None,
+    btc_range: dict[str, int] | None,
+    approximate: bool,
+) -> str:
+    if btc_range:
+        low = _format_btc_compact(float(btc_range["low"]))
+        high = _format_btc_compact(float(btc_range["high"]))
+        return f"~{low} - ~{high} BTC"
+    if btc is None:
+        return "Limited visibility"
+    prefix = "~" if approximate else ""
+    return f"{prefix}{_format_btc_compact(float(btc))} BTC"
+
+
+def _ownership_chart_categories(categories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in categories
+        if row["name"] != "Retail / unattributed supply" and row.get("btc") is not None
+    ]
 
 
 def _resolve_circulating_supply(settings: Settings) -> float | None:

@@ -501,10 +501,15 @@ def test_ownership_endpoint_payload_calculates_scarcity_metrics(monkeypatch, tmp
     )
     assert satoshi["percent"] == 5.56
     assert satoshi["source_type"] == "Research estimate"
+    assert satoshi["confidence"] == "research estimate"
     assert satoshi["estimated"] is True
+    assert payload["chart_categories"]
+    assert all(row["name"] != "Retail / unattributed supply" for row in payload["chart_categories"])
+    assert all("Only 1,200,000 BTC left to mine" not in insight for insight in payload["insights"])
+    assert any(insight.startswith("Mining scarcity:") for insight in payload["insights"])
 
 
-def test_ownership_unavailable_categories_do_not_get_fake_exact_values(
+def test_ownership_fallback_categories_are_rounded_estimates(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -520,11 +525,22 @@ def test_ownership_unavailable_categories_do_not_get_fake_exact_values(
     payload = get_btc_supply_ownership(_settings(tmp_path, cache_ttl_seconds=0))
     categories = {row["name"]: row for row in payload["categories"]}
 
-    assert categories["ETFs / funds"]["btc"] is None
-    assert categories["Governments / seized BTC"]["btc"] is None
-    assert categories["Exchanges / custodians"]["btc"] is None
-    assert categories["Miners"]["btc"] is None
+    expected_estimates = {
+        "ETFs / funds": 1_400_000,
+        "Governments / seized BTC": 530_000,
+        "Exchanges / custodians": 2_200_000,
+        "Miners": 1_800_000,
+    }
+    for name, btc in expected_estimates.items():
+        assert categories[name]["btc"] == btc
+        assert categories[name]["estimated"] is True
+        assert categories[name]["approximate"] is True
+        assert categories[name]["confidence"] == "approximate"
+        assert categories[name]["display_btc"].startswith("~")
+
+    assert categories["Public companies / treasuries"]["display_btc"] == "Limited visibility"
     assert categories["Lost coins estimate"]["btc_range"] == {"low": 3_000_000, "high": 4_000_000}
+    assert categories["Lost coins estimate"]["display_btc"] == "~3,000,000 - ~4,000,000 BTC"
 
 
 def test_ownership_cached_value_preserved_when_live_source_fails(monkeypatch, tmp_path) -> None:

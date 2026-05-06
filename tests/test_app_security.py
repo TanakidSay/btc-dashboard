@@ -319,7 +319,8 @@ def test_ownership_route_returns_stable_json(monkeypatch, tmp_path) -> None:
                     "estimated": True,
                 }
             ],
-            "insights": ["Only 1,200,000 BTC left to mine"],
+            "chart_categories": [],
+            "insights": ["Mining scarcity: about 1,200,000 BTC remain."],
             "updated_at": "2026-05-06T00:00:00Z",
             "status": "ok",
         },
@@ -342,5 +343,8 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "supplyInsightCards" in js
     assert "source_type" in js
     assert "confidence" in js
+    assert "display_btc" in js
+    assert "chart_categories" in js
+    assert "Limited visibility" in js
     assert "supplyInsightCards" in html
     assert "Effective liquid supply" in html
