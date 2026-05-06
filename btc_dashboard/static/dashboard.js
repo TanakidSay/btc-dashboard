@@ -40,6 +40,13 @@ function formatUsd(value) {
     return Number.isFinite(numeric) ? `$${numeric.toLocaleString()}` : `$${value}`;
 }
 
+function formatSignedUsd(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "Change: N/A";
+    const sign = numeric > 0 ? "+" : "";
+    return `Change: ${sign}${formatUsd(numeric)}`;
+}
+
 function formatCompactUsd(value) {
     if (value === undefined || value === null || value === "" || value === "N/A") return "N/A";
     const numeric = Number(value);
@@ -294,6 +301,31 @@ async function updateSecurity() {
 
 async function fetchPrice() { return fetchJson("/api/price"); }
 
+function renderBtcPriceCard(data) {
+    const latest = data.price_usd ?? data.latest;
+    const btcPrice = document.getElementById("btcPrice");
+    if (btcPrice) btcPrice.innerText = formatUsd(latest);
+
+    const prices = (data.price ?? []).map(Number).filter(Number.isFinite);
+    const latestPrice = prices.at(-1);
+    const previousPrice = prices.at(-2);
+    const priceChange = document.getElementById("btcPriceChange");
+    if (priceChange) {
+        const change = Number.isFinite(latestPrice) && Number.isFinite(previousPrice)
+            ? latestPrice - previousPrice
+            : null;
+        priceChange.innerText = change === null ? "Change: N/A" : formatSignedUsd(change);
+        priceChange.className = change === null
+            ? "text-gray-500"
+            : change >= 0
+            ? "text-green-400"
+            : "text-red-400";
+    }
+
+    const timestamp = document.getElementById("btcPriceTimestamp");
+    if (timestamp) timestamp.innerText = `Updated: ${data.updated_at ? formatDateTime(data.updated_at) : "N/A"}`;
+}
+
 async function initPriceChart() {
     let data = { time: [], price: [], price_usd: "N/A", latest: "N/A" };
     try {
@@ -306,7 +338,7 @@ async function initPriceChart() {
         data: { labels: data.time ?? [], datasets: [{ label: "BTC Price", data: data.price ?? [], borderColor: "#22c55e", backgroundColor: "rgba(34,197,94,0.12)", tension: 0.25, fill: true }] },
         options: sharedChartOptions,
     });
-    document.getElementById("btcPrice").innerText = formatUsd(data.price_usd ?? data.latest);
+    renderBtcPriceCard(data);
 }
 
 async function updatePriceChart() {
@@ -315,10 +347,18 @@ async function updatePriceChart() {
         priceChart.data.labels = data.time ?? [];
         priceChart.data.datasets[0].data = data.price ?? [];
         priceChart.update();
-        document.getElementById("btcPrice").innerText = formatUsd(data.price_usd ?? data.latest);
     } catch (error) {
         console.error("Failed to update BTC price", error);
-        document.getElementById("btcPrice").innerText = "N/A";
+    }
+}
+
+async function updateBtcPriceCard() {
+    try {
+        renderBtcPriceCard(await fetchPrice());
+    } catch (error) {
+        console.error("Failed to update BTC price", error);
+        const btcPrice = document.getElementById("btcPrice");
+        if (btcPrice) btcPrice.innerText = "N/A";
     }
 }
 
@@ -719,7 +759,11 @@ async function updateFeeRecommendation() {
 }
 
 // ── Refresh ───────────────────────────────────────────────
-async function refreshPrice() {
+async function refreshBtcPriceCard() {
+    await updateBtcPriceCard();
+}
+
+async function refreshPriceChart() {
     await updatePriceChart();
 }
 
@@ -787,14 +831,17 @@ async function initDashboard() {
         updateFeeRecommendation(),
         initDonationBox(),
     ]);
-    startRefreshJob("btc-price", refreshPrice, 5000);
+    startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000);
+    startRefreshJob("btc-price-chart", refreshPriceChart, 60000);
     startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000);
     startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000);
     startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000);
     startRefreshJob("institutional", refreshInstitutionalMetrics, 60 * 60 * 1000);
 }
 
-initDashboard().catch((error) => {
-    document.getElementById("alertBox").innerText = "Unable to load dashboard data.";
-    console.error(error);
+document.addEventListener("DOMContentLoaded", () => {
+    initDashboard().catch((error) => {
+        document.getElementById("alertBox").innerText = "Unable to load dashboard data.";
+        console.error(error);
+    });
 });
