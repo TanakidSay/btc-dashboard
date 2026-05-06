@@ -16,7 +16,7 @@ from .services import (
     record_view,
     snapshot,
 )
-from .signal_engine import latest_signals, signals_policy
+from .signal_engine import latest_signals, pending_signal_status, signals_policy
 from .x_poster import get_x_status, post_to_x
 
 api = Blueprint("api", __name__)
@@ -298,7 +298,10 @@ def api_signals():
 @api.route("/api/x-status")
 def api_x_status():
     try:
-        return jsonify(get_x_status(_settings()))
+        settings = _settings()
+        status = get_x_status(settings)
+        status.update(pending_signal_status(settings))
+        return jsonify(status)
     except Exception as exc:
         current_app.logger.exception("/api/x-status failed: %s", exc)
         return jsonify({

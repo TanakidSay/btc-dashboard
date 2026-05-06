@@ -79,7 +79,7 @@ def test_x_poster_cooldown_blocks_normal_signal(monkeypatch, tmp_path) -> None:
 
     assert first.posted is True
     assert second.posted is False
-    assert second.reason == "x_cooldown"
+    assert second.reason == "cooldown_active"
 
 
 def test_x_poster_mega_whale_bypasses_cooldown(monkeypatch, tmp_path) -> None:
@@ -108,10 +108,10 @@ def test_x_poster_daily_limit_enforced(monkeypatch, tmp_path) -> None:
             "event_id": f"event-{index}",
             "signal_type": "fee_spike",
             "text_hash": f"hash-{index}",
-            "posted_at": (now - timedelta(minutes=index)).isoformat().replace("+00:00", "Z"),
-            "bypass_cooldown": True,
+            "posted_at": (now - timedelta(hours=index + 2)).isoformat().replace("+00:00", "Z"),
+            "bypass_cooldown": False,
         }
-        for index in range(12)
+        for index in range(4)
     ]
     settings.x_posted_events_path.write_text(json.dumps({"events": events}), encoding="utf-8")
 
@@ -123,12 +123,20 @@ def test_x_poster_daily_limit_enforced(monkeypatch, tmp_path) -> None:
         signal_type="security_event",
         bypass_cooldown=True,
     )
+    mega = post_to_x(
+        "Mega whale after daily limit",
+        settings,
+        event_id="whale:mega-1",
+        signal_type="mega_whale",
+        bypass_cooldown=True,
+    )
     status = get_x_status(settings)
 
     assert blocked.posted is False
-    assert blocked.reason == "x_daily_limit"
+    assert blocked.reason == "daily_limit_reached"
     assert bypassed.posted is True
-    assert status["daily_post_count"] == 13
+    assert mega.posted is True
+    assert status["daily_post_count"] == 4
     assert status["daily_limit_remaining"] == 0
 
 

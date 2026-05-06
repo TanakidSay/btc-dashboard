@@ -6,6 +6,7 @@ from btc_dashboard.config import Settings
 from btc_dashboard.services import state
 from btc_dashboard.signal_engine import (
     Signal,
+    _queue_pending_signal,
     detect_signals,
     latest_signals,
     process_signals,
@@ -86,8 +87,10 @@ def test_disabled_post_logging_previews_each_signal(monkeypatch, tmp_path, caplo
     first = process_signals(settings)
     second = process_signals(settings)
 
-    assert first[0]["suppressed_reason"] == "x_posting_disabled"
-    assert second[0]["suppressed_reason"] == "x_posting_disabled"
+    assert first[0]["suppressed_reason"] == "queued"
+    assert first[-1]["suppressed_reason"] == "x_posting_disabled"
+    assert second[0]["suppressed_reason"] == "queued"
+    assert second[-1]["suppressed_reason"] == "x_posting_disabled"
     assert "[X preview]" in caplog.text
     assert signal_calls["count"] == 2
 
@@ -130,6 +133,7 @@ def test_whale_500_btc_allowed() -> None:
 
     assert policy["allowed"] is True
     assert policy["cooldown_applied"] is True
+    assert policy["score"] == 80
 
 
 def test_mega_whale_policy_bypasses_cooldown() -> None:
@@ -145,7 +149,24 @@ def test_normal_fee_blocked() -> None:
     policy = should_auto_post_signal(_signal("fee_trend_rising", "medium", {}))
 
     assert policy["allowed"] is False
-    assert policy["reason"] == "signal_type_not_auto_postable"
+    assert policy["reason"] == "score_too_low"
+
+
+def test_cheap_fee_window_score_below_65_blocked() -> None:
+    policy = should_auto_post_signal(_signal("cheap_fee_window", "low", {}))
+
+    assert policy["allowed"] is False
+    assert policy["reason"] == "score_too_low"
+    assert policy["score"] == 45
+
+
+def test_price_breakout_with_low_fee_allowed() -> None:
+    policy = should_auto_post_signal(
+        _signal("price_breakout", "medium", {"fee_still_low": True})
+    )
+
+    assert policy["allowed"] is True
+    assert policy["score"] == 65
 
 
 def test_strong_fee_spike_allowed() -> None:
@@ -175,7 +196,40 @@ def test_stale_treasury_blocked() -> None:
     )
 
     assert policy["allowed"] is False
-    assert policy["reason"] == "signal_type_not_auto_postable"
+    assert policy["reason"] == "score_too_low"
+
+
+def test_normal_informational_score_zero_blocked() -> None:
+    policy = should_auto_post_signal(_signal("normal_info", "info", {}))
+
+    assert policy["allowed"] is False
+    assert policy["score"] == 0
+
+
+def test_lower_score_duplicate_signal_blocked() -> None:
+    state = {"pending_signal_queue": []}
+    signal = _signal("price_breakout", "medium", {"fee_still_low": True})
+    first = _queue_pending_signal(signal, {"score": 80}, state)
+    second = _queue_pending_signal(signal, {"score": 65}, state)
+
+    assert first["queued"] is True
+    assert second == {"queued": False, "reason": "lower_priority_duplicate"}
+
+
+def test_higher_score_signal_selected_before_lower(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.detect_signals",
+        lambda settings: [
+            _signal("fee_spike", "high", {}),
+            _signal("whale_alert", "high", {"value_btc": 500}),
+        ],
+    )
+
+    results = process_signals(_settings(tmp_path, enable_x_posting=False))
+
+    selected = next(result for result in results if result.get("selected_from_queue"))
+    assert selected["signal_type"] == "whale_alert"
+    assert selected["score"] == 80
 
 
 def test_latest_signals_payload_includes_detected_signals(monkeypatch, tmp_path) -> None:

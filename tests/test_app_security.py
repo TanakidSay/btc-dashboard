@@ -207,7 +207,7 @@ def test_x_status_route_reports_configuration(monkeypatch, tmp_path) -> None:
     assert body["cooldown_remaining_seconds"] == 0
     assert body["posted_events_count"] == 0
     assert body["daily_post_count"] == 0
-    assert body["daily_limit_remaining"] == 12
+    assert body["daily_limit_remaining"] == 4
     assert "last_block_reason" in body
 
 
@@ -222,7 +222,7 @@ def test_signals_policy_route(monkeypatch, tmp_path) -> None:
     assert "whale_alert" in body["allowed_signal_types"]
     assert body["thresholds"]["whale_btc"] == 500
     assert body["cooldown_minutes"] == 60
-    assert body["max_posts_per_day"] == 12
+    assert body["max_posts_per_day"] == 4
 
 
 def test_x_test_post_preview_mode(monkeypatch, tmp_path) -> None:

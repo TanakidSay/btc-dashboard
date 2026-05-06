@@ -17,7 +17,7 @@ from .services import (
     get_security_overview,
     snapshot,
 )
-from .x_poster import post_to_x, record_x_block
+from .x_poster import get_x_status, post_to_x, record_x_block
 
 logger = logging.getLogger(__name__)
 
@@ -33,19 +33,31 @@ AUTO_POST_ALLOWED_SIGNAL_TYPES = [
     "whale_alert",
     "mega_whale",
     "security_event",
-    "mining_pool_concentration",
+    "price_breakout",
 ]
 AUTO_POST_BLOCKED_SIGNAL_TYPES = [
     "fee_trend_rising",
     "combined_congestion",
-    "low_fee_window",
+    "cheap_fee_window",
     "cheap_window",
     "hashrate_spike",
     "hashrate_drop",
     "etf_inflow",
     "etf_outflow",
     "treasury_holdings",
+    "mining_pool_concentration",
 ]
+SIGNAL_SCORES = {
+    "security_critical": 100,
+    "mega_whale": 95,
+    "whale": 80,
+    "strong_fee_spike": 75,
+    "price_breakout_low_fee": 65,
+    "cheap_fee_window": 45,
+    "pool_concentration_warning": 40,
+    "normal_informational": 0,
+}
+PENDING_SIGNAL_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -81,10 +93,20 @@ def detect_signals(settings: Settings) -> list[Signal]:
         whale_alert_threshold_btc=WHALE_BTC,
     )
 
+    latest_fee = _latest_fee(data.get("fee_data"))
     for alert in alerts:
         alert_type = alert.get("type", "")
         if alert_type in {"fee_spike", "fee_trend_rising", "combined_congestion"}:
             signals.append(_fee_signal(alert, now_iso))
+        elif alert_type == "price_breakout":
+            signal = _price_breakout_signal(
+                alert,
+                latest_fee,
+                settings.fee_spike_threshold,
+                now_iso,
+            )
+            if signal:
+                signals.append(signal)
         elif alert_type == "cheap_window":
             signals.append(_low_fee_signal(alert, now_iso))
         elif alert_type == "whale_transaction":
@@ -135,10 +157,14 @@ def detect_signals(settings: Settings) -> list[Signal]:
 
 def process_signals(settings: Settings) -> list[dict[str, Any]]:
     state = _load_post_state(settings.x_signal_state_path)
+    state["pending_signal_queue"] = _prune_pending_queue(state.get("pending_signal_queue", []))
     results = []
     for signal in detect_signals(settings):
         result = _process_signal(signal, settings, state)
         results.append(result)
+    drained = _drain_pending_signal_queue(settings, state)
+    if drained:
+        results.append(drained)
     _save_post_state(settings.x_signal_state_path, state)
     return results
 
@@ -159,12 +185,13 @@ def signals_policy() -> dict[str, Any]:
         "thresholds": {
             "whale_btc": WHALE_BTC,
             "mega_whale_btc": MEGA_WHALE_BTC,
+            "minimum_normal_score": 65,
             "strong_fee_spike_type": "fee_spike",
             "security_severity": "critical",
-            "pool_concentration_severity": "critical",
         },
+        "scoring": SIGNAL_SCORES,
         "cooldown_minutes": NORMAL_COOLDOWN_SECONDS // 60,
-        "max_posts_per_day": 12,
+        "max_posts_per_day": 4,
         "blocked_signal_types": AUTO_POST_BLOCKED_SIGNAL_TYPES,
     }
 
@@ -181,6 +208,7 @@ def should_auto_post_signal(signal: Signal) -> dict[str, Any]:
             "mega_whale_threshold_met" if allowed else "mega_whale_below_threshold",
             False,
             severity,
+            SIGNAL_SCORES["mega_whale"] if allowed else 0,
         )
 
     if signal.signal_type == "whale_alert":
@@ -191,15 +219,29 @@ def should_auto_post_signal(signal: Signal) -> dict[str, Any]:
             "whale_threshold_met" if allowed else "whale_below_500_btc",
             True,
             severity,
+            SIGNAL_SCORES["whale"] if allowed else 0,
         )
 
     if signal.signal_type == "fee_spike":
         allowed = severity == "high"
+        score = SIGNAL_SCORES["strong_fee_spike"] if allowed else 0
         return _policy_result(
             allowed,
-            "strong_fee_spike" if allowed else "fee_spike_not_strong",
+            "strong_fee_spike" if allowed else "score_too_low",
             True,
             severity,
+            score,
+        )
+
+    if signal.signal_type == "price_breakout":
+        low_fee = bool(signal.source.get("fee_still_low"))
+        score = SIGNAL_SCORES["price_breakout_low_fee"] if low_fee else 0
+        return _policy_result(
+            score >= 65,
+            "price_breakout_low_fee" if score >= 65 else "score_too_low",
+            True,
+            severity,
+            score,
         )
 
     if signal.signal_type == "security_event":
@@ -209,18 +251,38 @@ def should_auto_post_signal(signal: Signal) -> dict[str, Any]:
             "security_critical" if allowed else "security_not_critical",
             False if allowed else cooldown_applied,
             severity,
+            SIGNAL_SCORES["security_critical"] if allowed else 0,
         )
 
     if signal.signal_type == "mining_pool_concentration":
-        allowed = severity == "critical"
+        score = SIGNAL_SCORES["pool_concentration_warning"]
         return _policy_result(
-            allowed,
-            "pool_concentration_critical" if allowed else "pool_concentration_not_critical",
+            False,
+            "score_too_low",
             True,
             severity,
+            score,
         )
 
-    return _policy_result(False, "signal_type_not_auto_postable", cooldown_applied, severity)
+    if signal.signal_type == "cheap_fee_window":
+        return _policy_result(
+            False,
+            "score_too_low",
+            True,
+            severity,
+            SIGNAL_SCORES["cheap_fee_window"],
+        )
+
+    return _policy_result(False, "score_too_low", cooldown_applied, severity, 0)
+
+
+def pending_signal_status(settings: Settings) -> dict[str, Any]:
+    state = _load_post_state(settings.x_signal_state_path)
+    queue = _prune_pending_queue(state.get("pending_signal_queue", []))
+    return {
+        "pending_signals_count": len(queue),
+        "highest_pending_score": max((int(item.get("score", 0)) for item in queue), default=0),
+    }
 
 
 def _process_signal(
@@ -247,6 +309,14 @@ def _process_signal(
             policy["reason"],
         )
         record_x_block(policy["reason"])
+        return result
+
+    if policy["cooldown_applied"]:
+        queued = _queue_pending_signal(signal, policy, state)
+        result["suppressed_reason"] = queued["reason"]
+        result["queued"] = queued["queued"]
+        if not queued["queued"]:
+            record_x_block(queued["reason"])
         return result
 
     now = time.time()
@@ -303,7 +373,7 @@ def _fee_signal(alert: dict[str, Any], now_iso: str) -> Signal:
 def _low_fee_signal(alert: dict[str, Any], now_iso: str) -> Signal:
     message = str(alert.get("message") or "Low Bitcoin fee window detected")
     return Signal(
-        signal_type="low_fee_window",
+        signal_type="cheap_fee_window",
         severity="low",
         message=message,
         post_text=_fit_post(f"Low BTC fee window detected. {message}. Live view: {DASHBOARD_URL}"),
@@ -311,6 +381,28 @@ def _low_fee_signal(alert: dict[str, Any], now_iso: str) -> Signal:
         immediate=False,
         detected_at=now_iso,
         source=alert,
+    )
+
+
+def _price_breakout_signal(
+    alert: dict[str, Any],
+    latest_fee: float | None,
+    fee_threshold: float,
+    now_iso: str,
+) -> Signal | None:
+    fee_still_low = latest_fee is not None and latest_fee <= fee_threshold
+    message = str(alert.get("message") or "Bitcoin price breakout")
+    return Signal(
+        signal_type="price_breakout",
+        severity=str(alert.get("severity") or "medium"),
+        message=message,
+        post_text=_fit_post(
+            f"BTC price breakout while fees are still low. Live view: {DASHBOARD_URL}"
+        ),
+        duplicate_key=_bucket_key("price_breakout", now_iso),
+        immediate=False,
+        detected_at=now_iso,
+        source={**alert, "fee_still_low": fee_still_low, "latest_fee": latest_fee},
     )
 
 
@@ -447,7 +539,12 @@ def _load_post_state(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"posted_keys": [], "last_normal_posted_at": 0, "last_post": None}
+        return {
+            "posted_keys": [],
+            "last_normal_posted_at": 0,
+            "last_post": None,
+            "pending_signal_queue": [],
+        }
 
 
 def _save_post_state(path: Path, state: dict[str, Any]) -> None:
@@ -493,6 +590,117 @@ def _int_or_zero(value: Any) -> int:
         return 0
 
 
+def _queue_pending_signal(
+    signal: Signal,
+    policy: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    queue = _prune_pending_queue(state.get("pending_signal_queue", []))
+    incoming = {
+        "signal": asdict(signal),
+        "score": int(policy["score"]),
+        "queued_at": _utc_now_iso(),
+    }
+    for index, item in enumerate(queue):
+        existing_signal = item.get("signal", {})
+        if existing_signal.get("signal_type") != signal.signal_type:
+            continue
+        existing_score = int(item.get("score", 0))
+        if existing_score > int(policy["score"]):
+            state["pending_signal_queue"] = queue
+            return {"queued": False, "reason": "lower_priority_duplicate"}
+        queue[index] = incoming
+        state["pending_signal_queue"] = queue
+        return {"queued": True, "reason": "queued"}
+    queue.append(incoming)
+    state["pending_signal_queue"] = queue
+    return {"queued": True, "reason": "queued"}
+
+
+def _drain_pending_signal_queue(settings: Settings, state: dict[str, Any]) -> dict[str, Any] | None:
+    queue = _prune_pending_queue(state.get("pending_signal_queue", []))
+    state["pending_signal_queue"] = queue
+    if not queue:
+        return None
+    status = get_x_status(settings)
+    if int(status["daily_limit_remaining"]) <= 0:
+        record_x_block("daily_limit_reached")
+        return None
+    if int(status["cooldown_remaining_seconds"]) > 0:
+        record_x_block("cooldown_active")
+        return None
+    selected = max(
+        queue,
+        key=lambda item: (int(item.get("score", 0)), str(item.get("queued_at") or "")),
+    )
+    queue.remove(selected)
+    state["pending_signal_queue"] = queue
+    signal = _signal_from_dict(selected["signal"])
+    post_result = post_to_x(
+        signal.post_text,
+        settings,
+        event_id=signal.duplicate_key,
+        signal_type=signal.signal_type,
+        bypass_cooldown=False,
+    )
+    if not (post_result.posted or post_result.reason == "x_posting_disabled"):
+        queue.append(selected)
+        state["pending_signal_queue"] = queue
+    if post_result.posted:
+        _remember_signal(state, signal, time.time())
+    return {
+        **asdict(signal),
+        "posted": post_result.posted,
+        "suppressed_reason": post_result.reason,
+        "selected_from_queue": True,
+        "score": selected["score"],
+        **({"error": post_result.error} if post_result.error else {}),
+    }
+
+
+def _prune_pending_queue(queue: Any) -> list[dict[str, Any]]:
+    if not isinstance(queue, list):
+        return []
+    cutoff = time.time() - PENDING_SIGNAL_MAX_AGE_SECONDS
+    pruned = []
+    for item in queue:
+        if not isinstance(item, dict) or "signal" not in item:
+            continue
+        queued_at = _parse_iso_to_epoch(item.get("queued_at"))
+        if queued_at is not None and queued_at >= cutoff:
+            pruned.append(item)
+    return pruned
+
+
+def _signal_from_dict(data: dict[str, Any]) -> Signal:
+    return Signal(
+        signal_type=str(data["signal_type"]),
+        severity=str(data["severity"]),
+        message=str(data["message"]),
+        post_text=str(data["post_text"]),
+        duplicate_key=str(data["duplicate_key"]),
+        immediate=bool(data["immediate"]),
+        detected_at=str(data["detected_at"]),
+        source=dict(data.get("source") or {}),
+    )
+
+
+def _latest_fee(fee_data) -> float | None:
+    if fee_data is None or fee_data.empty:
+        return None
+    try:
+        return float(fee_data["sat_per_vbyte"].iloc[-1])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _parse_iso_to_epoch(value: Any) -> float | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
 def _signal_amount_btc(signal: Signal) -> float | None:
     for key in ("amount_btc", "value_btc"):
         value = signal.source.get(key)
@@ -506,10 +714,12 @@ def _policy_result(
     reason: str,
     cooldown_applied: bool,
     severity: str,
+    score: int,
 ) -> dict[str, Any]:
     return {
         "allowed": allowed,
         "reason": reason,
         "cooldown_applied": cooldown_applied,
         "severity": severity,
+        "score": score,
     }

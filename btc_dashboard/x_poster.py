@@ -19,7 +19,7 @@ REQUIRED_CREDENTIALS = {
     "X_ACCESS_SECRET": "x_access_secret",
 }
 NORMAL_COOLDOWN_SECONDS = 60 * 60
-MAX_POSTS_PER_DAY = 12
+MAX_POSTS_PER_DAY = 4
 DUPLICATE_TEXT_WINDOW = timedelta(hours=24)
 EVENT_RETENTION = timedelta(days=7)
 
@@ -77,7 +77,7 @@ def post_to_x(
         error = f"X post blocked: daily limit of {MAX_POSTS_PER_DAY} reached"
         logger.warning(error)
         _set_error(error)
-        return XPostResult(posted=False, reason="x_daily_limit", error=error)
+        return XPostResult(posted=False, reason="daily_limit_reached", error=error)
 
     if not bypass_cooldown:
         remaining = _cooldown_remaining_seconds(events)
@@ -85,7 +85,7 @@ def post_to_x(
             error = f"X post blocked: normal signal cooldown has {remaining}s remaining"
             logger.warning(error)
             _set_error(error)
-            return XPostResult(posted=False, reason="x_cooldown", error=error)
+            return XPostResult(posted=False, reason="cooldown_active", error=error)
 
     missing = missing_credentials(settings)
     if missing:
@@ -140,6 +140,7 @@ def get_x_status(settings: Settings) -> dict[str, object]:
             "last_post_time": _last_post_time or _last_post_time_from_events(events),
             "last_error": _last_error,
             "cooldown_remaining_seconds": _cooldown_remaining_seconds(events),
+            "max_posts_per_day": MAX_POSTS_PER_DAY,
             "daily_post_count": _daily_post_count(events),
             "daily_limit_remaining": max(MAX_POSTS_PER_DAY - _daily_post_count(events), 0),
             "last_block_reason": _last_block_reason,
@@ -224,7 +225,9 @@ def _daily_post_count(events: list[dict[str, Any]]) -> int:
     return sum(
         1
         for event in events
-        if (posted_at := _parse_iso(event.get("posted_at"))) is not None and posted_at >= cutoff
+        if not event.get("bypass_cooldown")
+        and (posted_at := _parse_iso(event.get("posted_at"))) is not None
+        and posted_at >= cutoff
     )
 
 
