@@ -346,5 +346,10 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "display_btc" in js
     assert "chart_categories" in js
     assert "Limited visibility" in js
+    assert 'startRefreshJob("btc-price", refreshBtcPriceMetrics, 5000)' in js
+    assert 'startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000)' in js
+    assert 'startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000)' in js
+    assert 'startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000)' in js
+    assert 'startRefreshJob("institutional", refreshInstitutionalMetrics, 60 * 60 * 1000)' in js
     assert "supplyInsightCards" in html
     assert "Effective liquid supply" in html

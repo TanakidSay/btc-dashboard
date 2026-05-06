@@ -47,6 +47,9 @@ MINERS_ESTIMATED_BTC = 1_800_000
 ETF_MAX_AGE_DAYS = 7
 SATS_PER_BTC = 100_000_000
 BTC_PRICE_TTL_SECONDS = 5
+FEE_MEMPOOL_TTL_SECONDS = 30
+HASHRATE_TTL_SECONDS = 10 * 60
+NODE_COUNT_TTL_SECONDS = 30 * 60
 INSTITUTIONAL_TTL_SECONDS = 60 * 60
 SECURITY_TTL_SECONDS = 30 * 60
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
@@ -184,12 +187,14 @@ class DashboardState:
 
 state = DashboardState()
 _cache: dict[str, CacheEntry] = {}
+_cache_refreshing: set[str] = set()
 _cache_lock = Lock()
 _viewer_lock = Lock()
 _treasury_cache_lock = Lock()
 _treasury_result_cache: CacheEntry | None = None
 _last_successful_treasury: dict[str, Any] | None = None
 _persistent_cache_lock = Lock()
+_persistent_cache_refreshing: set[str] = set()
 _persistent_caches: dict[str, PersistentCache] = {
     "treasury_cache": PersistentCache(deepcopy(FALLBACK_BTC_TREASURY)),
     "ownership_cache": PersistentCache(deepcopy(FALLBACK_SUPPLY_OWNERSHIP)),
@@ -307,6 +312,12 @@ def _cache_get(key: str) -> Any | None:
         return entry.value
 
 
+def _cache_peek(key: str) -> Any | None:
+    with _cache_lock:
+        entry = _cache.get(key)
+        return None if entry is None else entry.value
+
+
 def _cache_set(key: str, value: Any, ttl_seconds: int) -> Any:
     with _cache_lock:
         _cache[key] = CacheEntry(value=value, expires_at=time.monotonic() + ttl_seconds)
@@ -317,10 +328,12 @@ def clear_cache() -> None:
     global _treasury_result_cache, _last_successful_treasury
     with _cache_lock:
         _cache.clear()
+        _cache_refreshing.clear()
     with _treasury_cache_lock:
         _treasury_result_cache = None
         _last_successful_treasury = None
     with _persistent_cache_lock:
+        _persistent_cache_refreshing.clear()
         _persistent_caches["treasury_cache"] = PersistentCache(deepcopy(FALLBACK_BTC_TREASURY))
         _persistent_caches["ownership_cache"] = PersistentCache(deepcopy(FALLBACK_SUPPLY_OWNERSHIP))
         _persistent_caches["institutional_cache"] = PersistentCache({})
@@ -332,11 +345,49 @@ def _cached(key: str, settings: Settings, loader):
     return _cached_for(key, settings.cache_ttl_seconds, loader)
 
 
-def _cached_for(key: str, ttl_seconds: int, loader):
+def _cached_for(key: str, ttl_seconds: int, loader, refresh_log: str | None = None):
     cached_value = _cache_get(key)
     if cached_value is not None:
         return cached_value
-    return _cache_set(key, loader(), ttl_seconds)
+    stale_value = _cache_peek(key)
+    with _cache_lock:
+        if key in _cache_refreshing:
+            if stale_value is not None:
+                logger.debug("cache refresh skipped key=%s reason=already_running", key)
+                return stale_value
+            raise RuntimeError(f"{key} refresh already running")
+        _cache_refreshing.add(key)
+    try:
+        loaded_value = loader()
+        if _cache_value_is_empty(loaded_value) and not _cache_value_is_empty(stale_value):
+            logger.warning("cache refresh kept stale key=%s reason=empty_refresh", key)
+            return stale_value
+        _cache_set(key, loaded_value, ttl_seconds)
+        if refresh_log:
+            logger.info(refresh_log)
+        return loaded_value
+    except Exception as exc:
+        if stale_value is not None:
+            logger.warning("cache refresh failed key=%s; serving stale: %s", key, exc)
+            return stale_value
+        raise
+    finally:
+        with _cache_lock:
+            _cache_refreshing.discard(key)
+
+
+def _cache_value_is_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, MetricValue):
+        return _cache_value_is_empty(value.value)
+    if isinstance(value, pd.DataFrame):
+        return value.empty
+    if isinstance(value, dict):
+        return value == {} or value.get("status") == "error"
+    if value == "N/A":
+        return True
+    return False
 
 
 def _get_json(url: str, settings: Settings) -> Any:
@@ -414,7 +465,12 @@ def rpc_call(method: str, params: list[Any], settings: Settings) -> Any:
 
 
 def get_fee_data(settings: Settings) -> pd.DataFrame:
-    return _cached("fee_data", settings, lambda: _load_fee_data_with_fallbacks(settings)).copy()
+    return _cached_for(
+        "fee_data",
+        FEE_MEMPOOL_TTL_SECONDS,
+        lambda: _load_fee_data_with_fallbacks(settings),
+        "fees/mempool refreshed",
+    ).copy()
 
 
 def _load_fee_data_with_fallbacks(settings: Settings) -> pd.DataFrame:
@@ -481,7 +537,12 @@ def get_hashrate(settings: Settings) -> float | None:
 
 
 def get_hashrate_result(settings: Settings) -> MetricValue | None:
-    return _cached("hashrate", settings, lambda: _get_hashrate_with_fallbacks(settings))
+    return _cached_for(
+        "hashrate",
+        HASHRATE_TTL_SECONDS,
+        lambda: _get_hashrate_with_fallbacks(settings),
+        "hashrate refreshed",
+    )
 
 
 def _get_hashrate_with_fallbacks(settings: Settings) -> float | None:
@@ -554,7 +615,12 @@ def get_node_count(settings: Settings) -> int | str:
 
 
 def get_node_count_result(settings: Settings) -> MetricValue | None:
-    return _cached("node_count", settings, lambda: _get_node_count_with_fallbacks(settings))
+    return _cached_for(
+        "node_count",
+        NODE_COUNT_TTL_SECONDS,
+        lambda: _get_node_count_with_fallbacks(settings),
+        "nodes/security refreshed",
+    )
 
 
 def _get_node_count_with_fallbacks(settings: Settings) -> int | str:
@@ -601,6 +667,7 @@ def get_btc_price_result(settings: Settings) -> MetricValue | None:
         "btc_price",
         BTC_PRICE_TTL_SECONDS,
         lambda: _get_btc_price_with_fallbacks(settings),
+        "BTC price refreshed",
     )
 
 
@@ -1191,8 +1258,23 @@ def _cached_resource(
         logger.debug("cache served key=%s", cache_name)
         return cached
 
+    stale = _persistent_cache_value(cache_name)
+    with _persistent_cache_lock:
+        if cache_name in _persistent_cache_refreshing:
+            if not _cache_value_is_empty(stale):
+                logger.debug("cache refresh skipped key=%s reason=already_running", cache_name)
+                return stale
+            raise RuntimeError(f"{cache_name} refresh already running")
+        _persistent_cache_refreshing.add(cache_name)
     try:
         refreshed = refresh_fn()
+        if _cache_value_is_empty(refreshed) and not _cache_value_is_empty(stale):
+            logger.warning("cache refresh kept stale key=%s reason=empty_refresh", cache_name)
+            stale["status"] = "stale"
+            stale["updated_at"] = stale.get("updated_at") or _persistent_cache_updated_at(
+                cache_name,
+            )
+            return stale
         refreshed["updated_at"] = _utc_now_iso()
         refreshed["status"] = refreshed.get("status") or "ok"
         _set_persistent_cache(cache_name, refreshed, refreshed["status"])
@@ -1215,6 +1297,9 @@ def _cached_resource(
         fallback["error"] = str(exc)
         logger.info(fallback_log)
         return fallback
+    finally:
+        with _persistent_cache_lock:
+            _persistent_cache_refreshing.discard(cache_name)
 
 
 def append_metric_point(kind: str, value: float | None, timestamp: str | None = None) -> None:
@@ -1650,7 +1735,12 @@ def price_breakout_alert(prices: list[float], lookback: int) -> str | None:
 
 
 def get_recent_whale_transactions(settings: Settings) -> list[dict[str, Any]]:
-    return _cached("whale_transactions", settings, lambda: _get_recent_whale_transactions(settings))
+    return _cached_for(
+        "whale_transactions",
+        FEE_MEMPOOL_TTL_SECONDS,
+        lambda: _get_recent_whale_transactions(settings),
+        "fees/mempool refreshed",
+    )
 
 
 def _get_recent_whale_transactions(settings: Settings) -> list[dict[str, Any]]:
@@ -1820,6 +1910,14 @@ def get_security_overview(settings: Settings) -> dict[str, Any]:
         cached["updated_at"] = _persistent_cache_updated_at("security_cache")
         return cached
 
+    stale = _persistent_cache_value("security_cache")
+    with _persistent_cache_lock:
+        if "security_cache" in _persistent_cache_refreshing:
+            if not _cache_value_is_empty(stale):
+                logger.debug("cache refresh skipped key=security_cache reason=already_running")
+                return stale
+            raise RuntimeError("security_cache refresh already running")
+        _persistent_cache_refreshing.add("security_cache")
     try:
         from .security_services import (
             get_51_attack_risk,
@@ -1846,6 +1944,7 @@ def get_security_overview(settings: Settings) -> dict[str, Any]:
             "status": "ok",
         }
         _set_persistent_cache("security_cache", payload, "ok")
+        logger.info("nodes/security refreshed")
         return payload
     except Exception as exc:
         logger.warning("[ERROR] Using cached fallback: %s", exc)
@@ -1857,6 +1956,9 @@ def get_security_overview(settings: Settings) -> dict[str, Any]:
         fallback = safe_security_payload()
         fallback["updated_at"] = _utc_now_iso()
         return fallback
+    finally:
+        with _persistent_cache_lock:
+            _persistent_cache_refreshing.discard("security_cache")
 
 
 def _sanitize_security_metric(metric: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:

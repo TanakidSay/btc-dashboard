@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import requests
 
 from btc_dashboard.config import Settings
 from btc_dashboard.services import (
+    FEE_MEMPOOL_TTL_SECONDS,
+    HASHRATE_TTL_SECONDS,
+    NODE_COUNT_TTL_SECONDS,
+    SECURITY_TTL_SECONDS,
     _etf_date_is_recent,
     _extract_globalcoinguide_date,
     _extract_millions_flow,
@@ -29,6 +33,7 @@ from btc_dashboard.services import (
     get_node_count,
     get_node_count_result,
     get_recent_whale_transactions,
+    get_security_overview,
     get_viewer_stats,
     price_breakout_alert,
     record_view,
@@ -252,6 +257,28 @@ def test_get_btc_price_falls_back_to_coingecko(monkeypatch, tmp_path) -> None:
     assert get_btc_price(_settings(tmp_path)) == 87654.32
 
 
+def test_btc_price_cache_uses_five_second_cadence(monkeypatch, tmp_path) -> None:
+    clock = {"now": 0.0}
+    calls = {"count": 0}
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        calls["count"] += 1
+        return FakeResponse({"USD": 90_000 + calls["count"]})
+
+    monkeypatch.setattr("btc_dashboard.services.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    settings = _settings(tmp_path)
+
+    assert get_btc_price(settings) == 90_001
+    assert get_btc_price(settings) == 90_001
+    assert calls["count"] == 1
+
+    clock["now"] = 5.1
+
+    assert get_btc_price(settings) == 90_002
+    assert calls["count"] == 2
+
+
 def test_get_hashrate_uses_node_first(monkeypatch, tmp_path) -> None:
     post_calls = []
 
@@ -281,6 +308,29 @@ def test_get_hashrate_falls_back_to_mempool_when_node_fails(monkeypatch, tmp_pat
     result = get_hashrate_result(_settings(tmp_path))
     assert result is not None
     assert result.source == "mempool.space"
+
+
+def test_hashrate_cache_ttl_is_ten_minutes(monkeypatch, tmp_path) -> None:
+    assert HASHRATE_TTL_SECONDS == 10 * 60
+    clock = {"now": 0.0}
+    calls = {"count": 0}
+
+    def fake_post(url: str, **kwargs) -> FakeResponse:
+        calls["count"] += 1
+        return FakeResponse({"result": calls["count"] * 1_000_000_000_000})
+
+    monkeypatch.setattr("btc_dashboard.services.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr("btc_dashboard.services.session.post", fake_post)
+    settings = _settings(tmp_path)
+
+    assert get_hashrate(settings) == 1.0
+    clock["now"] = HASHRATE_TTL_SECONDS - 1
+    assert get_hashrate(settings) == 1.0
+    assert calls["count"] == 1
+
+    clock["now"] = HASHRATE_TTL_SECONDS + 0.1
+    assert get_hashrate(settings) == 2.0
+    assert calls["count"] == 2
 
 
 def test_get_node_count_uses_bitnodes_reachable_nodes(monkeypatch, tmp_path) -> None:
@@ -317,6 +367,29 @@ def test_get_node_count_falls_back_to_mempool_lightning(monkeypatch, tmp_path) -
     result = get_node_count_result(_settings(tmp_path))
     assert result is not None
     assert result.source == "mempool.space"
+
+
+def test_node_count_cache_ttl_is_thirty_minutes(monkeypatch, tmp_path) -> None:
+    assert NODE_COUNT_TTL_SECONDS == 30 * 60
+    clock = {"now": 0.0}
+    calls = {"count": 0}
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        calls["count"] += 1
+        return FakeResponse({"total_nodes": 17_000 + calls["count"]})
+
+    monkeypatch.setattr("btc_dashboard.services.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    settings = _settings(tmp_path)
+
+    assert get_node_count(settings) == 17_001
+    clock["now"] = NODE_COUNT_TTL_SECONDS - 1
+    assert get_node_count(settings) == 17_001
+    assert calls["count"] == 1
+
+    clock["now"] = NODE_COUNT_TTL_SECONDS + 0.1
+    assert get_node_count(settings) == 17_002
+    assert calls["count"] == 2
 
 
 def test_get_fee_data_uses_node_blocks_first(monkeypatch, tmp_path) -> None:
@@ -381,6 +454,41 @@ def test_get_fee_data_falls_back_to_mempool_blocks(monkeypatch, tmp_path) -> Non
             "sat_per_vbyte": 2.0,
         }
     ]
+
+
+def test_fee_data_cache_uses_thirty_second_cadence(monkeypatch, tmp_path) -> None:
+    assert FEE_MEMPOOL_TTL_SECONDS == 30
+    clock = {"now": 0.0}
+    calls = {"best_hash": 0}
+
+    def fake_post(url: str, **kwargs) -> FakeResponse:
+        method = kwargs["json"]["method"]
+        if method == "getbestblockhash":
+            calls["best_hash"] += 1
+            return FakeResponse({"result": f"hash-{calls['best_hash']}"})
+        if method == "getblock":
+            height = calls["best_hash"]
+            return FakeResponse({
+                "result": {
+                    "height": height,
+                    "tx": [{"vout": [{"value": 3.126}]}, {"vout": []}],
+                    "weight": 4000,
+                },
+            })
+        raise AssertionError(f"unexpected method: {method}")
+
+    monkeypatch.setattr("btc_dashboard.services.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr("btc_dashboard.services.session.post", fake_post)
+    settings = _settings(tmp_path, node_block_count=1)
+
+    assert get_fee_data(settings)["height"].tolist() == [1]
+    clock["now"] = FEE_MEMPOOL_TTL_SECONDS - 1
+    assert get_fee_data(settings)["height"].tolist() == [1]
+    assert calls["best_hash"] == 1
+
+    clock["now"] = FEE_MEMPOOL_TTL_SECONDS + 0.1
+    assert get_fee_data(settings)["height"].tolist() == [2]
+    assert calls["best_hash"] == 2
 
 
 def test_get_btc_treasury_holdings_retries_before_success(monkeypatch, tmp_path) -> None:
@@ -565,6 +673,86 @@ def test_ownership_cached_value_preserved_when_live_source_fails(monkeypatch, tm
     assert second["status"] == "stale"
     assert second["categories"] == first["categories"]
     assert second["circulating_supply"] == first["circulating_supply"]
+
+
+def test_ownership_data_does_not_refresh_on_frequent_calls(monkeypatch, tmp_path) -> None:
+    calls = {"treasury": 0, "supply": 0}
+
+    def fake_treasury(settings):
+        calls["treasury"] += 1
+        return {"total_btc_held": 500_000, "top_holders": [], "status": "ok"}
+
+    def fake_supply(settings):
+        calls["supply"] += 1
+        return 19_800_000
+
+    monkeypatch.setattr("btc_dashboard.services.get_btc_treasury_holdings", fake_treasury)
+    monkeypatch.setattr("btc_dashboard.services._get_circulating_supply", fake_supply)
+    settings = _settings(tmp_path)
+
+    first = get_btc_supply_ownership(settings)
+    second = get_btc_supply_ownership(settings)
+
+    assert first["categories"] == second["categories"]
+    assert calls == {"treasury": 1, "supply": 1}
+
+
+def test_static_ownership_estimates_do_not_call_external_apis(monkeypatch, tmp_path) -> None:
+    def fail_external(*args, **kwargs):
+        raise AssertionError("static fallback estimates should not call external APIs")
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fail_external)
+    monkeypatch.setattr("btc_dashboard.services.session.post", fail_external)
+    monkeypatch.setattr(
+        "btc_dashboard.services.get_btc_treasury_holdings",
+        lambda settings: {"total_btc_held": "N/A", "top_holders": [], "status": "stale"},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.services._get_circulating_supply",
+        lambda settings: 19_800_000,
+    )
+
+    payload = get_btc_supply_ownership(_settings(tmp_path))
+    categories = {row["name"]: row for row in payload["categories"]}
+
+    assert categories["ETFs / funds"]["display_btc"] == "~1,400,000 BTC"
+    assert categories["Governments / seized BTC"]["display_btc"] == "~530,000 BTC"
+
+
+def test_security_cache_ttl_is_thirty_minutes(monkeypatch, tmp_path) -> None:
+    assert SECURITY_TTL_SECONDS == 30 * 60
+    now = {"value": datetime(2026, 5, 6, tzinfo=UTC)}
+    calls = {"attack": 0}
+
+    monkeypatch.setattr("btc_dashboard.services._utc_now_dt", lambda: now["value"])
+    monkeypatch.setattr(
+        "btc_dashboard.security_services.get_double_spend_attempts",
+        lambda rpc_call_fn, settings: {"orphan_count": 0, "orphans": [], "active_height": 1},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.security_services.get_invalid_block_attempts",
+        lambda rpc_call_fn, settings: {"invalid_count": 0, "invalid_chains": []},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.security_services.get_reorg_events",
+        lambda rpc_call_fn, settings: {"reorg_count": 0, "reorgs": []},
+    )
+
+    def fake_attack(settings):
+        calls["attack"] += 1
+        return {"pools": [], "top_pool_share": calls["attack"], "risk_level": "low"}
+
+    monkeypatch.setattr("btc_dashboard.security_services.get_51_attack_risk", fake_attack)
+    settings = _settings(tmp_path)
+
+    assert get_security_overview(settings)["attack_51"]["top_pool_share"] == 1
+    now["value"] = now["value"] + timedelta(seconds=SECURITY_TTL_SECONDS - 1)
+    assert get_security_overview(settings)["attack_51"]["top_pool_share"] == 1
+    assert calls["attack"] == 1
+
+    now["value"] = now["value"] + timedelta(seconds=2)
+    assert get_security_overview(settings)["attack_51"]["top_pool_share"] == 2
+    assert calls["attack"] == 2
 
 
 def test_parse_farside_etf_rows_from_text_handles_pipe_rows() -> None:

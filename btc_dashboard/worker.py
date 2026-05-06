@@ -163,16 +163,12 @@ def refresh_once(settings: Settings) -> None:
 
         if _due("etf", now_monotonic):
             get_etf_flow(settings)
-            logger.info("[WORKER] ETF updated")
         if _due("treasury", now_monotonic):
             get_btc_treasury_holdings(settings)
-            logger.info("[WORKER] Treasury updated")
         if _due("ownership", now_monotonic):
             get_btc_supply_ownership(settings)
-            logger.info("[WORKER] Ownership updated")
         if _due("security", now_monotonic):
             get_security_overview(settings)
-            logger.info("[WORKER] Security updated")
 
         with state.lock:
             price_val = _val(btc_price)

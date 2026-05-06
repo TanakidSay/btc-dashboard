@@ -794,6 +794,20 @@ async function refreshPriceChart() {
     await updatePriceChart();
 }
 
+async function refreshBtcPriceMetrics() {
+    try {
+        const data = await fetchPrice();
+        renderBtcPriceCard(data);
+        if (priceChart) {
+            priceChart.data.labels = data.time ?? [];
+            priceChart.data.datasets[0].data = data.price ?? [];
+            priceChart.update();
+        }
+    } catch (error) {
+        console.error("Failed to refresh BTC price metrics", error);
+    }
+}
+
 async function refreshMempoolMetrics() {
     await Promise.allSettled([
         updateFeeChart(),
@@ -858,8 +872,7 @@ async function initDashboard() {
         updateFeeRecommendation(),
         initDonationBox(),
     ]);
-    startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000);
-    startRefreshJob("btc-price-chart", refreshPriceChart, 60000);
+    startRefreshJob("btc-price", refreshBtcPriceMetrics, 5000);
     startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000);
     startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000);
     startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000);
