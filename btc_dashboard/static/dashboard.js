@@ -4,6 +4,7 @@ let priceChart;
 let txChart;
 let etfFlowChart;
 let supplyOwnershipChart;
+const refreshJobs = new Map();
 
 const sharedChartOptions = {
     responsive: true,
@@ -404,6 +405,7 @@ async function updateHashChart() {
         hashChart.data.labels = (data.time ?? []).map(formatChartTimeLabel);
         hashChart.data.datasets[0].data = data.hashrate ?? [];
         hashChart.update();
+        document.getElementById("hashrate").innerText = valueOrNA(data.latest);
     } catch (error) {
         console.error("Failed to update hashrate chart", error);
     }
@@ -418,6 +420,16 @@ async function updateNetwork() {
     } catch (error) {
         console.error("Failed to update network data", error);
         document.getElementById("hashrate").innerText = "N/A";
+        document.getElementById("nodes").innerText = "N/A";
+    }
+}
+
+async function updateNetworkNodes() {
+    try {
+        const data = await fetchJson("/api/network");
+        document.getElementById("nodes").innerText = valueOrNA(data.nodes);
+    } catch (error) {
+        console.error("Failed to update node count", error);
         document.getElementById("nodes").innerText = "N/A";
     }
 }
@@ -707,20 +719,57 @@ async function updateFeeRecommendation() {
 }
 
 // ── Refresh ───────────────────────────────────────────────
-async function refreshDashboard() {
+async function refreshPrice() {
+    await updatePriceChart();
+}
+
+async function refreshMempoolMetrics() {
     await Promise.allSettled([
-        updatePriceChart(),
         updateFeeChart(),
         updateTxChart(),
-        updateHashChart(),
-        updateNetwork(),
         updateViewers(),
-        updateInstitutionalMetrics(),
-        updateSupplyOwnership(),
         updateAlert(),
-        updateSecurity(),
         updateFeeRecommendation(),
     ]);
+}
+
+async function refreshHashrateMetrics() {
+    await updateHashChart();
+}
+
+async function refreshNodeMetrics() {
+    await Promise.allSettled([
+        updateNetworkNodes(),
+        updateSecurity(),
+    ]);
+}
+
+async function refreshInstitutionalMetrics() {
+    await Promise.allSettled([
+        updateInstitutionalMetrics(),
+        updateSupplyOwnership(),
+    ]);
+}
+
+function startRefreshJob(name, task, intervalMs) {
+    if (refreshJobs.has(name)) {
+        console.debug(`refresh skipped ${name}: already scheduled`);
+        return;
+    }
+    let running = false;
+    const run = async () => {
+        if (running) {
+            console.debug(`refresh skipped ${name}: previous run still active`);
+            return;
+        }
+        running = true;
+        try {
+            await task();
+        } finally {
+            running = false;
+        }
+    };
+    refreshJobs.set(name, window.setInterval(run, intervalMs));
 }
 
 async function initDashboard() {
@@ -738,7 +787,11 @@ async function initDashboard() {
         updateFeeRecommendation(),
         initDonationBox(),
     ]);
-    setInterval(refreshDashboard, 60000);
+    startRefreshJob("btc-price", refreshPrice, 5000);
+    startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000);
+    startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000);
+    startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000);
+    startRefreshJob("institutional", refreshInstitutionalMetrics, 60 * 60 * 1000);
 }
 
 initDashboard().catch((error) => {

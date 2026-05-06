@@ -32,7 +32,7 @@ class Settings:
     bitcoin_rpc_user: str = "bitcoinuser"
     bitcoin_rpc_password: str | None = None
     bitcoin_block_reward_btc: float = 3.125
-    refresh_seconds: int = 10
+    refresh_seconds: int = 5
     request_timeout: int = 5
     cache_ttl_seconds: int = 30
     node_block_count: int = 10
@@ -93,7 +93,7 @@ class Settings:
             bitcoin_rpc_user=os.getenv("BITCOIN_RPC_USER", "bitcoinuser"),
             bitcoin_rpc_password=os.getenv("BITCOIN_RPC_PASSWORD") or None,
             bitcoin_block_reward_btc=float(os.getenv("BITCOIN_BLOCK_REWARD_BTC", "3.125")),
-            refresh_seconds=int(os.getenv("DASHBOARD_REFRESH_SECONDS", "10")),
+            refresh_seconds=int(os.getenv("DASHBOARD_REFRESH_SECONDS", "5")),
             request_timeout=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "5")),
             cache_ttl_seconds=int(os.getenv("CACHE_TTL_SECONDS", "30")),
             node_block_count=int(os.getenv("NODE_BLOCK_COUNT", "10")),

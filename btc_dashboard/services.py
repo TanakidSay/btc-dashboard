@@ -41,6 +41,9 @@ BITCOIN_MAX_SUPPLY_BTC = 21_000_000
 SATOSHI_ESTIMATED_BTC = 1_100_000
 ETF_MAX_AGE_DAYS = 7
 SATS_PER_BTC = 100_000_000
+BTC_PRICE_TTL_SECONDS = 5
+INSTITUTIONAL_TTL_SECONDS = 60 * 60
+SECURITY_TTL_SECONDS = 30 * 60
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
 COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/flow-history"
@@ -289,6 +292,7 @@ def _cache_get(key: str) -> Any | None:
         entry = _cache.get(key)
         if entry is None or entry.expires_at <= time.monotonic():
             return None
+        logger.debug("cache served key=%s", key)
         return entry.value
 
 
@@ -314,10 +318,14 @@ def clear_cache() -> None:
 
 
 def _cached(key: str, settings: Settings, loader):
+    return _cached_for(key, settings.cache_ttl_seconds, loader)
+
+
+def _cached_for(key: str, ttl_seconds: int, loader):
     cached_value = _cache_get(key)
     if cached_value is not None:
         return cached_value
-    return _cache_set(key, loader(), settings.cache_ttl_seconds)
+    return _cache_set(key, loader(), ttl_seconds)
 
 
 def _get_json(url: str, settings: Settings) -> Any:
@@ -578,7 +586,11 @@ def get_btc_price(settings: Settings) -> float | None:
 
 
 def get_btc_price_result(settings: Settings) -> MetricValue | None:
-    return _cached("btc_price", settings, lambda: _get_btc_price_with_fallbacks(settings))
+    return _cached_for(
+        "btc_price",
+        BTC_PRICE_TTL_SECONDS,
+        lambda: _get_btc_price_with_fallbacks(settings),
+    )
 
 
 def _get_btc_price_with_fallbacks(settings: Settings) -> float | None:
@@ -616,7 +628,7 @@ def _get_btc_price_from_coingecko(settings: Settings) -> float:
 def get_etf_flow(settings: Settings) -> dict[str, Any]:
     return _cached_resource(
         "etf_cache",
-        300,
+        INSTITUTIONAL_TTL_SECONDS,
         lambda: _get_etf_flow_with_fallback(settings),
         "[CACHE] ETF refreshed",
         "[ERROR] Using cached fallback",
@@ -1005,7 +1017,7 @@ def _parse_farside_number(value: str) -> float | None:
 def get_btc_treasury_holdings(settings: Settings) -> dict[str, Any]:
     payload = _cached_resource(
         "treasury_cache",
-        300,
+        INSTITUTIONAL_TTL_SECONDS,
         lambda: _get_btc_treasury_with_fallback(settings),
         "[CACHE] Treasury refreshed",
         "[CACHE] Treasury fallback used",
@@ -1165,6 +1177,7 @@ def _cached_resource(
         cached = _persistent_cache_value(cache_name)
         cached.setdefault("updated_at", _persistent_cache_updated_at(cache_name))
         cached.setdefault("status", "ok")
+        logger.debug("cache served key=%s", cache_name)
         return cached
 
     try:
@@ -1241,7 +1254,7 @@ def safe_security_payload() -> dict[str, Any]:
 def get_btc_supply_ownership(settings: Settings) -> dict[str, Any]:
     return _cached_resource(
         "ownership_cache",
-        300,
+        INSTITUTIONAL_TTL_SECONDS,
         lambda: _get_btc_supply_ownership(settings),
         "[CACHE] Ownership refreshed",
         "[CACHE] Ownership fallback used",
@@ -1587,7 +1600,7 @@ def build_alerts(
 
 
 def get_security_overview(settings: Settings) -> dict[str, Any]:
-    if _persistent_cache_is_fresh("security_cache", settings.cache_ttl_seconds):
+    if _persistent_cache_is_fresh("security_cache", SECURITY_TTL_SECONDS):
         cached = _persistent_cache_value("security_cache")
         cached["updated_at"] = _persistent_cache_updated_at("security_cache")
         return cached

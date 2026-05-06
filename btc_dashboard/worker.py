@@ -61,15 +61,21 @@ else:
 logger = logging.getLogger(__name__)
 
 _worker_thread: threading.Thread | None = None
+_worker_start_lock = threading.Lock()
+_refresh_lock = threading.Lock()
 _stop_event = threading.Event()
 _last_metric_refresh: dict[str, float] = {}
 _METRIC_INTERVALS = {
-    "price": 60,
-    "hashrate": 300,
-    "treasury": 300,
-    "etf": 300,
-    "network": 600,
-    "security": 600,
+    "price": 5,
+    "fees": 30,
+    "mempool_stats": 30,
+    "hashrate": 10 * 60,
+    "treasury": 60 * 60,
+    "ownership": 60 * 60,
+    "etf": 60 * 60,
+    "network": 30 * 60,
+    "security": 30 * 60,
+    "signals": 30,
 }
 
 
@@ -118,41 +124,55 @@ def warm_local_cache(settings: Settings) -> None:
 
 
 def refresh_once(settings: Settings) -> None:
+    if not _refresh_lock.acquire(blocking=False):
+        logger.info("refresh skipped reason=already_running")
+        return
+
     try:
-        fee_data = get_fee_data(settings)
-        table_html = build_table_html(fee_data, settings.max_table_rows)
         now_monotonic = time.monotonic()
         now_iso = _utc_now_iso()
 
         with state.lock:
             force_price = state.btc_price is None
+            force_fees = state.fee_data is None
             force_hashrate = state.hashrate is None
             force_network = state.node_count in {None, FALLBACK_NODE_COUNT}
 
-        btc_price = (
-            get_btc_price_result(settings)
-            if _due("price", now_monotonic, force_price)
-            else None
-        )
-        hashrate = (
-            get_hashrate_result(settings)
-            if _due("hashrate", now_monotonic, force_hashrate)
-            else None
-        )
-        node_count = (
-            get_node_count_result(settings)
-            if _due("network", now_monotonic, force_network)
-            else None
-        )
+        btc_price = None
+        fee_data = None
+        table_html = None
+        hashrate = None
+        node_count = None
+
+        if _due("price", now_monotonic, force_price):
+            btc_price = get_btc_price_result(settings)
+
+        if _due("fees", now_monotonic, force_fees):
+            fee_data = get_fee_data(settings)
+            table_html = build_table_html(fee_data, settings.max_table_rows)
+            logger.info("[WORKER] Fees updated")
+
+        if _due("mempool_stats", now_monotonic):
+            logger.debug("mempool stats refresh due")
+
+        if _due("hashrate", now_monotonic, force_hashrate):
+            hashrate = get_hashrate_result(settings)
+
+        if _due("network", now_monotonic, force_network):
+            node_count = get_node_count_result(settings)
 
         if _due("etf", now_monotonic):
             get_etf_flow(settings)
             logger.info("[WORKER] ETF updated")
         if _due("treasury", now_monotonic):
             get_btc_treasury_holdings(settings)
+            logger.info("[WORKER] Treasury updated")
+        if _due("ownership", now_monotonic):
             get_btc_supply_ownership(settings)
+            logger.info("[WORKER] Ownership updated")
         if _due("security", now_monotonic):
             get_security_overview(settings)
+            logger.info("[WORKER] Security updated")
 
         with state.lock:
             price_val = _val(btc_price)
@@ -169,8 +189,10 @@ def refresh_once(settings: Settings) -> None:
                 state.node_count = node_val
                 state.metric_timestamps["network"] = now_iso
 
-            state.fee_data = fee_data.copy()
-            state.table_html = table_html
+            if fee_data is not None:
+                state.fee_data = fee_data.copy()
+            if table_html is not None:
+                state.table_html = table_html
 
             if state.hashrate is not None:
                 state.hashrate_history.append(state.hashrate)
@@ -179,7 +201,7 @@ def refresh_once(settings: Settings) -> None:
 
         if price_val is not None:
             append_metric_point("price", price_val, now_iso)
-            logger.info("[WORKER] Price updated")
+            logger.info("btc price updated source=%s value=%s", _source(btc_price), price_val)
         if hash_val is not None:
             append_metric_point("hashrate", hash_val, now_iso)
             logger.info("[WORKER] Hashrate updated")
@@ -194,10 +216,14 @@ def refresh_once(settings: Settings) -> None:
             _source(node_count) if node_count is not None else "cached",
         )
 
-        notify_fee_spike_if_needed(fee_data, settings)
-        process_signals(settings)
+        if fee_data is not None:
+            notify_fee_spike_if_needed(fee_data, settings)
+        if _due("signals", now_monotonic):
+            process_signals(settings)
     except Exception:
         logger.exception("refresh_once crashed")
+    finally:
+        _refresh_lock.release()
 
 
 def _utc_now_iso() -> str:
@@ -218,6 +244,11 @@ def _due(metric: str, now_monotonic: float, force: bool = False) -> bool:
     if force or last is None or (now_monotonic - last) >= interval:
         _last_metric_refresh[metric] = now_monotonic
         return True
+    logger.debug(
+        "refresh skipped metric=%s next_in=%.1fs",
+        metric,
+        max(interval - (now_monotonic - last), 0),
+    )
     return False
 
 
@@ -253,7 +284,7 @@ def background_worker(settings: Settings) -> None:
     logger.info("Worker started (refresh=%ss)", settings.refresh_seconds)
     while not _stop_event.is_set():
         refresh_once(settings)
-        time.sleep(settings.refresh_seconds)
+        _stop_event.wait(settings.refresh_seconds)
 
 
 def start_background_worker(settings: Settings) -> threading.Thread:
@@ -262,18 +293,20 @@ def start_background_worker(settings: Settings) -> threading.Thread:
     configure_state(settings)
     warm_local_cache(settings)
 
-    if _worker_thread and _worker_thread.is_alive():
-        return _worker_thread
+    with _worker_start_lock:
+        if _worker_thread and _worker_thread.is_alive():
+            logger.info("refresh skipped reason=worker_already_running")
+            return _worker_thread
 
-    _stop_event.clear()
-    _worker_thread = threading.Thread(
-        target=background_worker,
-        args=(settings,),
-        daemon=True,
-    )
-    _worker_thread.start()
-    logger.info("Worker thread launched")
-    return _worker_thread
+        _stop_event.clear()
+        _worker_thread = threading.Thread(
+            target=background_worker,
+            args=(settings,),
+            daemon=True,
+        )
+        _worker_thread.start()
+        logger.info("Worker thread launched")
+        return _worker_thread
 
 
 def stop_background_worker() -> None:

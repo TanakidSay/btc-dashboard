@@ -7,6 +7,7 @@ import pandas as pd
 from btc_dashboard.config import Settings
 from btc_dashboard.services import MetricValue, state
 from btc_dashboard.worker import (
+    _last_metric_refresh,
     notify_fee_spike_if_needed,
     refresh_once,
     run_worker,
@@ -23,6 +24,14 @@ def _settings() -> Settings:
         notification_cooldown_seconds=300,
         start_worker=False,
     )
+
+
+def _stub_slow_refreshes(monkeypatch) -> None:
+    monkeypatch.setattr("btc_dashboard.worker.get_etf_flow", lambda settings: {})
+    monkeypatch.setattr("btc_dashboard.worker.get_btc_treasury_holdings", lambda settings: {})
+    monkeypatch.setattr("btc_dashboard.worker.get_btc_supply_ownership", lambda settings: {})
+    monkeypatch.setattr("btc_dashboard.worker.get_security_overview", lambda settings: {})
+    monkeypatch.setattr("btc_dashboard.worker.process_signals", lambda settings: [])
 
 
 def test_notify_fee_spike_sends_once(monkeypatch) -> None:
@@ -71,6 +80,8 @@ def test_notify_fee_spike_retries_after_failed_send(monkeypatch) -> None:
 
 
 def test_refresh_once_preserves_last_metrics_on_api_failure(monkeypatch, tmp_path) -> None:
+    _last_metric_refresh.clear()
+    _stub_slow_refreshes(monkeypatch)
     settings = Settings(
         secret_key="test",
         fee_csv_path=tmp_path / "fees.csv",
@@ -112,6 +123,8 @@ def test_refresh_once_preserves_last_metrics_on_api_failure(monkeypatch, tmp_pat
 
 
 def test_refresh_once_updates_external_metrics(monkeypatch, tmp_path, caplog) -> None:
+    _last_metric_refresh.clear()
+    _stub_slow_refreshes(monkeypatch)
     settings = Settings(
         secret_key="test",
         fee_csv_path=tmp_path / "fees.csv",
@@ -156,6 +169,55 @@ def test_refresh_once_updates_external_metrics(monkeypatch, tmp_path, caplog) ->
     assert "price=$87,654.32 source=coingecko" in caplog.text
     assert "hashrate=999.00 TH/s source=mempool.space" in caplog.text
     assert "nodes=17425 source=mempool.space" in caplog.text
+
+
+def test_refresh_once_keeps_only_price_on_five_second_cadence(monkeypatch, tmp_path) -> None:
+    _last_metric_refresh.clear()
+    _stub_slow_refreshes(monkeypatch)
+    settings = Settings(
+        secret_key="test",
+        fee_csv_path=tmp_path / "fees.csv",
+        start_worker=False,
+    )
+    fee_data = pd.DataFrame({"height": [100], "tx_count": [10], "sat_per_vbyte": [1.5]})
+    calls = {"price": 0, "fees": 0, "hashrate": 0, "nodes": 0}
+    monotonic_values = iter([100.0, 105.0])
+
+    def fake_price(settings: Settings) -> MetricValue:
+        calls["price"] += 1
+        return MetricValue(80000 + calls["price"], "mempool.space")
+
+    def fake_fees(settings: Settings) -> pd.DataFrame:
+        calls["fees"] += 1
+        return fee_data
+
+    def fake_hashrate(settings: Settings) -> MetricValue:
+        calls["hashrate"] += 1
+        return MetricValue(999.0, "mempool.space")
+
+    def fake_nodes(settings: Settings) -> MetricValue:
+        calls["nodes"] += 1
+        return MetricValue(17425, "mempool.space")
+
+    monkeypatch.setattr("btc_dashboard.worker.time.monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr("btc_dashboard.worker.get_btc_price_result", fake_price)
+    monkeypatch.setattr("btc_dashboard.worker.get_fee_data", fake_fees)
+    monkeypatch.setattr("btc_dashboard.worker.get_hashrate_result", fake_hashrate)
+    monkeypatch.setattr("btc_dashboard.worker.get_node_count_result", fake_nodes)
+    monkeypatch.setattr("btc_dashboard.worker.notify_fee_spike_if_needed", lambda *args: None)
+
+    with state.lock:
+        state.fee_data = None
+        state.hashrate = None
+        state.node_count = None
+        state.btc_price = None
+        state.hashrate_history.clear()
+        state.price_history.clear()
+
+    refresh_once(settings)
+    refresh_once(settings)
+
+    assert calls == {"price": 2, "fees": 1, "hashrate": 1, "nodes": 1}
 
 
 def test_run_worker_configures_and_starts_loop(monkeypatch, tmp_path, caplog) -> None:
