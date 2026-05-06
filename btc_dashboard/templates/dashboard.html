@@ -258,11 +258,11 @@
         <h2 class="text-xs font-semibold text-amber-300">☕ Support this dashboard</h2>
         <p class="mt-1 leading-4 text-gray-400">Free Bitcoin dashboard. Tips help keep it running.</p>
 
-        <div class="mt-2 rounded-md border border-gray-800 bg-gray-900/80 p-2">
-            <p class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Lightning</p>
+        <div class="mt-2 flex max-w-full flex-col items-center rounded-md border border-gray-800 bg-gray-900/80 p-1.5">
+            <p class="mb-1 self-start text-[11px] font-semibold uppercase tracking-wide text-gray-400">Lightning</p>
             <img
                 id="lightningQrImage"
-                class="hidden h-20 w-20 rounded-md border border-gray-800 bg-white p-1"
+                class="hidden h-[104px] w-[104px] max-w-full rounded-md border border-gray-800 bg-white p-1 object-contain"
                 src="{{ url_for('static', filename='lightning-qr.png') }}"
                 alt="Lightning donation QR"
             >
