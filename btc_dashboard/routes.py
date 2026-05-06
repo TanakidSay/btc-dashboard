@@ -207,6 +207,7 @@ def api_treasury():
         })
 
 
+@api.route("/api/ownership")
 @api.route("/api/supply-ownership")
 def api_supply_ownership():
     try:
@@ -214,15 +215,21 @@ def api_supply_ownership():
     except Exception as exc:
         current_app.logger.exception("/api/supply-ownership failed: %s", exc)
         return jsonify({
+            "circulating_supply": "N/A",
+            "max_supply": 21_000_000,
+            "remaining_to_mine": "N/A",
+            "percent_mined": "N/A",
+            "estimated_lost_btc": {"low": 3_000_000, "high": 4_000_000},
+            "effective_liquid_supply": {"low": "N/A", "high": "N/A"},
+            "categories": [],
+            "insights": [],
             "max_supply_btc": 21_000_000,
-            "circulating_supply_btc": 0,
-            "known_btc": 0,
-            "unknown_btc": 21_000_000,
+            "circulating_supply_btc": "N/A",
             "ownership": [],
             "top_holders": [],
             "source": "fallback",
             "status": "error",
-            "updated_at": None,
+            "updated_at": "",
             "error": str(exc),
             "note": "Bitcoin addresses are pseudonymous, so owner attribution is estimated.",
         })

@@ -491,7 +491,7 @@ async function updateViewers() {
 // Institutional metrics
 async function fetchEtfFlow() { return fetchJson("/api/etf"); }
 async function fetchTreasury() { return fetchJson("/api/treasury"); }
-async function fetchSupplyOwnership() { return fetchJson("/api/supply-ownership"); }
+async function fetchSupplyOwnership() { return fetchJson("/api/ownership"); }
 
 function institutionalInsight(etfData, treasuryData, priceData) {
     const prices = priceData?.price ?? [];
@@ -568,47 +568,73 @@ async function initEtfFlowChart() {
 }
 
 function renderSupplyOwnership(data) {
-    const ownership = data.ownership ?? [];
+    const categories = data.categories ?? data.ownership ?? [];
     document.getElementById("supplyOwnershipNote").innerText = data.note ?? "Estimated ownership distribution.";
-    document.getElementById("supplyCirculating").innerText = `Circulating: ${formatBtc(data.circulating_supply_btc)}`;
-    document.getElementById("supplyOwnershipList").innerHTML = ownership.length
-        ? ownership.map((row) => `
-            <div class="rounded bg-gray-800 p-3">
-                <div class="flex items-center justify-between gap-3">
-                    <span class="font-semibold text-gray-100">${escapeHtml(row.label)}</span>
-                    <span class="text-gray-300">${formatPercent(row.percent_of_max_supply)}</span>
+    document.getElementById("supplyCirculating").innerText = `Circulating: ${formatBtc(data.circulating_supply ?? data.circulating_supply_btc)}`;
+    document.getElementById("supplyRemaining").innerText = formatBtc(data.remaining_to_mine);
+    document.getElementById("supplyPercentMined").innerText = formatPercent(data.percent_mined);
+    const lost = data.estimated_lost_btc ?? {};
+    document.getElementById("supplyLostEstimate").innerText = `${formatBtc(lost.low)} - ${formatBtc(lost.high)}`;
+    const liquid = data.effective_liquid_supply ?? {};
+    document.getElementById("supplyLiquidEstimate").innerText = `${formatBtc(liquid.low)} - ${formatBtc(liquid.high)}`;
+    document.getElementById("supplyOwnershipUpdated").innerText = `Updated: ${formatDateTime(data.updated_at)}`;
+    document.getElementById("supplyInsightCards").innerHTML = (data.insights ?? []).map((insight) => `
+        <div class="rounded border border-amber-500/20 bg-gray-950 p-3 text-sm text-gray-200">
+            ${escapeHtml(insight)}
+        </div>`).join("");
+    document.getElementById("supplyOwnershipList").innerHTML = categories.length
+        ? categories.map((row) => `
+            <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <span class="font-semibold text-gray-100">${escapeHtml(row.name ?? row.label)}</span>
+                    <span class="text-gray-300">${formatPercent(row.percent)}</span>
                 </div>
-                <div class="mt-1 flex items-center justify-between gap-3 text-xs text-gray-400">
-                    <span>${formatBtc(row.btc)}</span>
-                    <span>${escapeHtml(row.confidence ?? "estimated")} | ${escapeHtml(row.source ?? "unknown")}</span>
+                <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-400 sm:grid-cols-4">
+                    <span>${formatOwnershipBtc(row)}</span>
+                    <span>${escapeHtml(row.source_type ?? row.source ?? "unknown")}</span>
+                    <span class="${confidenceClass(row.confidence)}">${escapeHtml(row.confidence ?? "low")} confidence</span>
+                    <span>${row.estimated ? "Estimated" : escapeHtml(row.status_label ?? "Live")}</span>
                 </div>
             </div>`).join("")
         : `<p class="text-gray-500">Ownership data unavailable.</p>`;
 }
 
+function formatOwnershipBtc(row) {
+    if (row.btc !== undefined && row.btc !== null) return formatBtc(row.btc);
+    if (row.btc_range) return `${formatBtc(row.btc_range.low)} - ${formatBtc(row.btc_range.high)}`;
+    return "N/A";
+}
+
+function confidenceClass(confidence) {
+    if (confidence === "high") return "text-green-400";
+    if (confidence === "medium") return "text-amber-300";
+    return "text-gray-500";
+}
+
 async function initSupplyOwnershipChart() {
-    let data = { ownership: [], note: "Loading...", circulating_supply_btc: 0 };
+    let data = { categories: [], note: "Loading...", circulating_supply: 0 };
     try {
         data = await fetchSupplyOwnership();
     } catch (error) {
         console.error("Failed to initialize BTC supply ownership", error);
     }
-    const ownership = data.ownership ?? [];
+    const ownership = (data.categories ?? data.ownership ?? []).filter((row) => Number.isFinite(Number(row.btc)));
     supplyOwnershipChart = new Chart(document.getElementById("supplyOwnershipChart"), {
         type: "doughnut",
         data: {
-            labels: ownership.map((row) => row.label),
+            labels: ownership.map((row) => row.name ?? row.label),
             datasets: [{
                 data: ownership.map((row) => row.btc),
-                backgroundColor: ["#22c55e", "#f59e0b", "#64748b"],
+                backgroundColor: ["#f59e0b", "#38bdf8", "#22c55e", "#64748b"],
                 borderColor: "#111827",
-                borderWidth: 2,
+                borderWidth: 3,
             }],
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { position: "bottom", labels: { color: "#d1d5db" } } },
+            cutout: "58%",
+            plugins: { legend: { position: "bottom", labels: { color: "#d1d5db", boxWidth: 12 } } },
         },
     });
     renderSupplyOwnership(data);
@@ -639,9 +665,9 @@ async function updateInstitutionalMetrics() {
 async function updateSupplyOwnership() {
     try {
         const data = await fetchSupplyOwnership();
-        const ownership = data.ownership ?? [];
+        const ownership = (data.categories ?? data.ownership ?? []).filter((row) => Number.isFinite(Number(row.btc)));
         if (supplyOwnershipChart) {
-            supplyOwnershipChart.data.labels = ownership.map((row) => row.label);
+            supplyOwnershipChart.data.labels = ownership.map((row) => row.name ?? row.label);
             supplyOwnershipChart.data.datasets[0].data = ownership.map((row) => row.btc);
             supplyOwnershipChart.update();
         }

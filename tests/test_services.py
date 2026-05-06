@@ -19,6 +19,7 @@ from btc_dashboard.services import (
     format_hashrate,
     get_btc_price,
     get_btc_price_result,
+    get_btc_supply_ownership,
     get_btc_treasury_holdings,
     get_etf_flow,
     get_fee_data,
@@ -477,6 +478,77 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
             "coingecko-company-treasury: HTTP 503"
         ),
     }
+
+
+def test_ownership_endpoint_payload_calculates_scarcity_metrics(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "btc_dashboard.services.get_btc_treasury_holdings",
+        lambda settings: {"total_btc_held": 500_000, "top_holders": [], "status": "ok"},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.services._get_circulating_supply",
+        lambda settings: 19_800_000,
+    )
+
+    payload = get_btc_supply_ownership(_settings(tmp_path, cache_ttl_seconds=0))
+
+    assert payload["circulating_supply"] == 19_800_000
+    assert payload["max_supply"] == 21_000_000
+    assert payload["remaining_to_mine"] == 1_200_000
+    assert payload["percent_mined"] == 94.29
+    satoshi = next(
+        row for row in payload["categories"] if row["name"] == "Satoshi Nakamoto estimate"
+    )
+    assert satoshi["percent"] == 5.56
+    assert satoshi["source_type"] == "Research estimate"
+    assert satoshi["estimated"] is True
+
+
+def test_ownership_unavailable_categories_do_not_get_fake_exact_values(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "btc_dashboard.services.get_btc_treasury_holdings",
+        lambda settings: {"total_btc_held": "N/A", "top_holders": [], "status": "stale"},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.services._get_circulating_supply",
+        lambda settings: 19_800_000,
+    )
+
+    payload = get_btc_supply_ownership(_settings(tmp_path, cache_ttl_seconds=0))
+    categories = {row["name"]: row for row in payload["categories"]}
+
+    assert categories["ETFs / funds"]["btc"] is None
+    assert categories["Governments / seized BTC"]["btc"] is None
+    assert categories["Exchanges / custodians"]["btc"] is None
+    assert categories["Miners"]["btc"] is None
+    assert categories["Lost coins estimate"]["btc_range"] == {"low": 3_000_000, "high": 4_000_000}
+
+
+def test_ownership_cached_value_preserved_when_live_source_fails(monkeypatch, tmp_path) -> None:
+    settings = _settings(tmp_path, cache_ttl_seconds=0)
+    monkeypatch.setattr(
+        "btc_dashboard.services.get_btc_treasury_holdings",
+        lambda settings: {"total_btc_held": 500_000, "top_holders": [], "status": "ok"},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.services._get_circulating_supply",
+        lambda settings: 19_800_000,
+    )
+    first = get_btc_supply_ownership(settings)
+
+    monkeypatch.setattr("btc_dashboard.services._persistent_cache_is_fresh", lambda *args: False)
+    monkeypatch.setattr(
+        "btc_dashboard.services.get_btc_treasury_holdings",
+        lambda settings: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    second = get_btc_supply_ownership(settings)
+
+    assert second["status"] == "stale"
+    assert second["categories"] == first["categories"]
+    assert second["circulating_supply"] == first["circulating_supply"]
 
 
 def test_parse_farside_etf_rows_from_text_handles_pipe_rows() -> None:

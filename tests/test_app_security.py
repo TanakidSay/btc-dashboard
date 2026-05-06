@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from base64 import b64encode
+from pathlib import Path
 
 from btc_dashboard.app import create_app
 from btc_dashboard.config import Settings
@@ -295,3 +296,51 @@ def test_x_test_post_missing_credentials_does_not_crash(monkeypatch, tmp_path) -
     assert body["ok"] is False
     assert body["mode"] == "error"
     assert "X_API_SECRET" in body["last_error"]
+
+
+def test_ownership_route_returns_stable_json(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_btc_supply_ownership",
+        lambda settings: {
+            "circulating_supply": 19_800_000,
+            "max_supply": 21_000_000,
+            "remaining_to_mine": 1_200_000,
+            "percent_mined": 94.29,
+            "estimated_lost_btc": {"low": 3_000_000, "high": 4_000_000},
+            "effective_liquid_supply": {"low": 15_800_000, "high": 16_800_000},
+            "categories": [
+                {
+                    "name": "Satoshi Nakamoto estimate",
+                    "btc": 1_100_000,
+                    "percent": 5.56,
+                    "source_type": "Research estimate",
+                    "confidence": "medium",
+                    "estimated": True,
+                }
+            ],
+            "insights": ["Only 1,200,000 BTC left to mine"],
+            "updated_at": "2026-05-06T00:00:00Z",
+            "status": "ok",
+        },
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/ownership")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["categories"][0]["estimated"] is True
+    assert body["remaining_to_mine"] == 1_200_000
+
+
+def test_frontend_renders_ownership_categories_and_insights() -> None:
+    js = Path("btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+    html = Path("btc_dashboard/templates/dashboard.html").read_text(encoding="utf-8")
+
+    assert "/api/ownership" in js
+    assert "supplyInsightCards" in js
+    assert "source_type" in js
+    assert "confidence" in js
+    assert "supplyInsightCards" in html
+    assert "Effective liquid supply" in html

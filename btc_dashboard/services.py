@@ -39,6 +39,7 @@ FALLBACK_NODE_COUNT = "N/A"
 SAFE_SECURITY_RISK = "low"
 BITCOIN_MAX_SUPPLY_BTC = 21_000_000
 SATOSHI_ESTIMATED_BTC = 1_100_000
+LOST_BTC_ESTIMATE_RANGE = {"low": 3_000_000, "high": 4_000_000}
 ETF_MAX_AGE_DAYS = 7
 SATS_PER_BTC = 100_000_000
 BTC_PRICE_TTL_SECONDS = 5
@@ -110,10 +111,16 @@ FALLBACK_BTC_TREASURY = {
     "error": "",
 }
 FALLBACK_SUPPLY_OWNERSHIP = {
+    "circulating_supply": "N/A",
+    "max_supply": BITCOIN_MAX_SUPPLY_BTC,
+    "remaining_to_mine": "N/A",
+    "percent_mined": "N/A",
+    "estimated_lost_btc": deepcopy(LOST_BTC_ESTIMATE_RANGE),
+    "effective_liquid_supply": {"low": "N/A", "high": "N/A"},
+    "categories": [],
+    "insights": [],
     "max_supply_btc": BITCOIN_MAX_SUPPLY_BTC,
-    "circulating_supply_btc": 0,
-    "known_btc": 0,
-    "unknown_btc": BITCOIN_MAX_SUPPLY_BTC,
+    "circulating_supply_btc": "N/A",
     "ownership": [],
     "top_holders": [],
     "source": "fallback",
@@ -1263,61 +1270,184 @@ def get_btc_supply_ownership(settings: Settings) -> dict[str, Any]:
 
 
 def _get_btc_supply_ownership(settings: Settings) -> dict[str, Any]:
-    try:
-        treasury = get_btc_treasury_holdings(settings)
-        treasury_btc = _to_float_or_none(treasury.get("total_btc_held"))
-        circulating_supply = _get_circulating_supply(settings)
+    treasury = get_btc_treasury_holdings(settings)
+    treasury_btc = _to_float_or_none(treasury.get("total_btc_held"))
+    circulating_supply = _resolve_circulating_supply(settings)
+    if circulating_supply is None:
+        raise RuntimeError("circulating supply unavailable")
+    return _build_ownership_payload(treasury, treasury_btc, circulating_supply, "ok", "")
 
-        ownership = []
-        if treasury_btc is not None:
-            ownership.append(_ownership_row(
-                "Public companies and governments",
-                treasury_btc,
-                "coingecko",
-                "reported",
-            ))
-        ownership.append(_ownership_row(
+
+def _build_ownership_payload(
+    treasury: dict[str, Any],
+    treasury_btc: float | None,
+    circulating_supply: float,
+    status: str,
+    error: str | None,
+) -> dict[str, Any]:
+    remaining_to_mine = max(BITCOIN_MAX_SUPPLY_BTC - circulating_supply, 0)
+    percent_mined = (circulating_supply / BITCOIN_MAX_SUPPLY_BTC) * 100
+    liquid_low = max(circulating_supply - LOST_BTC_ESTIMATE_RANGE["high"], 0)
+    liquid_high = max(circulating_supply - LOST_BTC_ESTIMATE_RANGE["low"], 0)
+
+    categories = [
+        _ownership_category(
             "Satoshi Nakamoto estimate",
             SATOSHI_ESTIMATED_BTC,
-            "research estimate",
-            "estimated",
-        ))
+            circulating_supply,
+            "Research estimate",
+            "medium",
+            True,
+        ),
+        _ownership_category(
+            "ETFs / funds",
+            None,
+            circulating_supply,
+            "Live unavailable",
+            "low",
+            False,
+        ),
+        _ownership_category(
+            "Public companies / treasuries",
+            treasury_btc,
+            circulating_supply,
+            "Live" if treasury_btc is not None else "Live unavailable",
+            "high" if treasury_btc is not None else "low",
+            False,
+        ),
+        _ownership_category(
+            "Governments / seized BTC",
+            None,
+            circulating_supply,
+            "Live unavailable",
+            "low",
+            False,
+        ),
+        _ownership_category(
+            "Exchanges / custodians",
+            None,
+            circulating_supply,
+            "On-chain inferred unavailable",
+            "low",
+            False,
+        ),
+        _ownership_category(
+            "Miners",
+            None,
+            circulating_supply,
+            "On-chain inferred unavailable",
+            "low",
+            False,
+        ),
+        _ownership_category(
+            "Lost coins estimate",
+            None,
+            circulating_supply,
+            "Research estimate",
+            "low",
+            True,
+            btc_range=LOST_BTC_ESTIMATE_RANGE,
+        ),
+        _ownership_category(
+            "Retail / unattributed supply",
+            _round_estimate(
+                max(
+                    circulating_supply - SATOSHI_ESTIMATED_BTC - LOST_BTC_ESTIMATE_RANGE["high"],
+                    0,
+                )
+            ),
+            circulating_supply,
+            "On-chain inferred",
+            "low",
+            True,
+        ),
+    ]
 
-        known_btc = sum(row["btc"] for row in ownership)
-        unknown_btc = max(BITCOIN_MAX_SUPPLY_BTC - known_btc, 0)
-        ownership.append(_ownership_row(
-            "Unattributed wallets, exchanges, miners, lost coins and individuals",
-            unknown_btc,
-            "on-chain unattributed",
-            "estimated",
-        ))
+    insights = [
+        f"Only {_format_btc_compact(remaining_to_mine)} BTC left to mine",
+        "Estimated lost coins reduce effective supply",
+        "Institutional custody continues growing",
+        (
+            "Unattributed ownership remains the largest category because "
+            "Bitcoin addresses are pseudonymous"
+        ),
+    ]
 
-        return {
-            "max_supply_btc": BITCOIN_MAX_SUPPLY_BTC,
-            "circulating_supply_btc": circulating_supply,
-            "known_btc": round(known_btc, 2),
-            "unknown_btc": round(unknown_btc, 2),
-            "ownership": ownership,
-            "top_holders": treasury.get("top_holders", []),
-            "source": "coingecko + estimates",
-            "error": None,
-            "note": "Bitcoin ownership is estimated because addresses are pseudonymous.",
-        }
-    except Exception as exc:
-        logger.warning("BTC supply ownership failed: %s", exc)
-        fallback = FALLBACK_SUPPLY_OWNERSHIP.copy()
-        fallback["error"] = str(exc)
-        return fallback
-
-
-def _ownership_row(label: str, btc: float, source: str, confidence: str) -> dict[str, Any]:
     return {
-        "label": label,
-        "btc": round(float(btc), 2),
-        "percent_of_max_supply": round((float(btc) / BITCOIN_MAX_SUPPLY_BTC) * 100, 2),
-        "source": source,
-        "confidence": confidence,
+        "circulating_supply": round(circulating_supply, 8),
+        "max_supply": BITCOIN_MAX_SUPPLY_BTC,
+        "remaining_to_mine": round(remaining_to_mine, 8),
+        "percent_mined": round(percent_mined, 2),
+        "estimated_lost_btc": deepcopy(LOST_BTC_ESTIMATE_RANGE),
+        "effective_liquid_supply": {
+            "low": round(liquid_low, 2),
+            "high": round(liquid_high, 2),
+        },
+        "categories": categories,
+        "insights": insights,
+        "updated_at": _utc_now_iso(),
+        "status": status,
+        "error": error or "",
+        "note": "Bitcoin ownership is estimated because addresses are pseudonymous.",
+        "top_holders": treasury.get("top_holders", []),
+        "source": "coingecko + research estimates + transparent unavailable categories",
+        "max_supply_btc": BITCOIN_MAX_SUPPLY_BTC,
+        "circulating_supply_btc": round(circulating_supply, 8),
+        "ownership": categories,
     }
+
+
+def _ownership_category(
+    name: str,
+    btc: float | None,
+    circulating_supply: float,
+    source_type: str,
+    confidence: str,
+    estimated: bool,
+    btc_range: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    percent = None if btc is None else round((float(btc) / circulating_supply) * 100, 2)
+    return {
+        "name": name,
+        "label": name,
+        "btc": None if btc is None else round(float(btc), 2),
+        "btc_range": btc_range,
+        "percent": percent,
+        "percent_of_circulating_supply": percent,
+        "source_type": source_type,
+        "source": source_type,
+        "confidence": confidence,
+        "estimated": estimated,
+        "status_label": _status_label(source_type, estimated),
+    }
+
+
+def _resolve_circulating_supply(settings: Settings) -> float | None:
+    circulating_supply = _to_float_or_none(_get_circulating_supply(settings))
+    if circulating_supply is not None:
+        return circulating_supply
+    cached = _persistent_cache_value("ownership_cache")
+    return _to_float_or_none(
+        cached.get("circulating_supply") or cached.get("circulating_supply_btc")
+    )
+
+
+def _round_estimate(value: float) -> float:
+    return round(value / 100_000) * 100_000
+
+
+def _status_label(source_type: str, estimated: bool) -> str:
+    if source_type == "Live":
+        return "Live"
+    if "Cached" in source_type:
+        return "Cached"
+    if estimated:
+        return "Estimated"
+    return source_type
+
+
+def _format_btc_compact(value: float) -> str:
+    return f"{round(value):,}"
 
 
 def _get_circulating_supply(settings: Settings) -> float | str:
