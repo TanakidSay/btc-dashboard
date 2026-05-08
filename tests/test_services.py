@@ -37,8 +37,11 @@ from btc_dashboard.services import (
     get_recent_whale_transactions,
     get_security_overview,
     get_viewer_stats,
+    increment_total_views,
+    load_total_views,
     price_breakout_alert,
     record_view,
+    save_total_views,
     whale_transaction_alert,
 )
 
@@ -176,6 +179,7 @@ def _settings(tmp_path, **overrides) -> Settings:
         "secret_key": "test",
         "fee_csv_path": tmp_path / "fees.csv",
         "viewer_stats_path": tmp_path / "viewer_stats.json",
+        "view_counter_path": tmp_path / "view_counter.json",
         "start_worker": False,
         "bitcoin_rpc_password": "test",
         "cache_ttl_seconds": 30,
@@ -209,6 +213,38 @@ def test_get_viewer_stats_returns_zeroes_when_file_is_missing(tmp_path) -> None:
         "unique_visitors": 0,
         "last_viewed_at": None,
     }
+    assert settings.view_counter_path.exists()
+
+
+def test_total_view_counter_persists_after_restart_simulation(tmp_path) -> None:
+    counter_path = tmp_path / "view_counter.json"
+
+    assert increment_total_views(counter_path) == 1
+    assert increment_total_views(counter_path) == 2
+    assert load_total_views(counter_path) == 2
+
+
+def test_total_view_counter_recreates_missing_file(tmp_path) -> None:
+    counter_path = tmp_path / "missing_view_counter.json"
+
+    assert load_total_views(counter_path) == 0
+    assert counter_path.exists()
+
+
+def test_total_view_counter_handles_corrupted_file(tmp_path) -> None:
+    counter_path = tmp_path / "view_counter.json"
+    counter_path.write_text("{not-json", encoding="utf-8")
+
+    assert load_total_views(counter_path) == 0
+    assert load_total_views(counter_path) == 0
+
+
+def test_save_total_views_sanitizes_negative_values(tmp_path) -> None:
+    counter_path = tmp_path / "view_counter.json"
+
+    save_total_views(counter_path, -5)
+
+    assert load_total_views(counter_path) == 0
 
 
 def test_get_btc_price_uses_binance(monkeypatch, tmp_path) -> None:
@@ -770,6 +806,28 @@ def test_static_ownership_estimates_do_not_call_external_apis(monkeypatch, tmp_p
 
     assert categories["ETFs / funds"]["display_btc"] == "~1,400,000 BTC"
     assert categories["Governments / seized BTC"]["display_btc"] == "~530,000 BTC"
+
+
+def test_ownership_estimates_are_labeled_transparently(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "btc_dashboard.services.get_btc_treasury_holdings",
+        lambda settings: {"total_btc_held": None, "top_holders": [], "status": "stale"},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.services._get_circulating_supply",
+        lambda settings: 19_800_000,
+    )
+
+    payload = get_btc_supply_ownership(_settings(tmp_path, cache_ttl_seconds=0))
+    categories = {row["name"]: row for row in payload["categories"]}
+
+    assert categories["Satoshi Nakamoto estimate"]["estimated"] is True
+    assert categories["Satoshi Nakamoto estimate"]["confidence"] == "research estimate"
+    assert categories["Lost coins estimate"]["display_btc"].startswith("~")
+    assert categories["Lost coins estimate"]["source_type"] == "Research estimate"
+    assert categories["Public companies / treasuries"]["display_btc"] == "Limited visibility"
+    assert categories["Public companies / treasuries"]["estimated"] is True
+    assert "pseudonymous" in payload["note"]
 
 
 def test_security_cache_ttl_is_thirty_minutes(monkeypatch, tmp_path) -> None:

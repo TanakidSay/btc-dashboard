@@ -235,6 +235,10 @@ def load_fee_data(path: Path, max_rows: int) -> pd.DataFrame:
 def get_viewer_stats(settings: Settings) -> dict[str, Any]:
     with _viewer_lock:
         stats = _load_viewer_stats(settings.viewer_stats_path)
+        stats["total_views"] = load_total_views(
+            settings.view_counter_path,
+            fallback=int(stats.get("total_views") or 0),
+        )
     return _public_viewer_stats(stats)
 
 
@@ -246,7 +250,10 @@ def record_view(
     visitor_key = _viewer_key(remote_addr, user_agent)
     with _viewer_lock:
         stats = _load_viewer_stats(settings.viewer_stats_path)
-        stats["total_views"] += 1
+        stats["total_views"] = increment_total_views(
+            settings.view_counter_path,
+            fallback=int(stats.get("total_views") or 0),
+        )
         if visitor_key not in stats["known_visitors"]:
             stats["known_visitors"].append(visitor_key)
         stats["unique_visitors"] = len(stats["known_visitors"])
@@ -258,6 +265,38 @@ def record_view(
 def _viewer_key(remote_addr: str | None, user_agent: str | None) -> str:
     fingerprint = f"{remote_addr or 'unknown'}|{user_agent or 'unknown'}"
     return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
+
+
+def load_total_views(path: Path, fallback: int = 0) -> int:
+    safe_fallback = max(int(fallback or 0), 0)
+    if not path.exists():
+        save_total_views(path, safe_fallback)
+        return safe_fallback
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        total_views = int(payload.get("total_views", safe_fallback))
+        return max(total_views, 0)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("view counter load failed: %s", exc)
+        save_total_views(path, safe_fallback)
+        return safe_fallback
+
+
+def save_total_views(path: Path, total_views: int) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"total_views": max(int(total_views), 0)}, indent=2),
+            encoding="utf-8",
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning("view counter save failed: %s", exc)
+
+
+def increment_total_views(path: Path, fallback: int = 0) -> int:
+    total_views = load_total_views(path, fallback=fallback) + 1
+    save_total_views(path, total_views)
+    return total_views
 
 
 def _load_viewer_stats(path: Path) -> dict[str, Any]:

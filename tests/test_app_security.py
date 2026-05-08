@@ -13,6 +13,7 @@ def _settings(tmp_path, **overrides) -> Settings:
         "secret_key": "test-secret",
         "fee_csv_path": tmp_path / "fees.csv",
         "viewer_stats_path": tmp_path / "viewer_stats.json",
+        "view_counter_path": tmp_path / "view_counter.json",
         "x_signal_state_path": tmp_path / "x_signal_state.json",
         "x_posted_events_path": tmp_path / "posted_events.json",
         "start_worker": False,
@@ -388,3 +389,16 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "supplyInsightCards" in html
     assert "etfFlowNote" in html
     assert "Effective liquid supply" in html
+
+
+def test_frontend_includes_generational_wealth_branding_asset() -> None:
+    html = Path("btc_dashboard/templates/dashboard.html").read_text(encoding="utf-8")
+    asset = Path("btc_dashboard/static/generational-mascot.webp")
+
+    assert "Built for Generational Wealth." in html
+    assert "Real-Time Bitcoin Intelligence for Long-Term Holders." in html
+    assert "BTC Window — Built for Generational Wealth." in html
+    assert "generational-mascot.webp" in html
+    assert "Animation-style child mascot" in html
+    assert asset.exists()
+    assert asset.stat().st_size < 150_000

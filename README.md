@@ -31,10 +31,14 @@ Update `.env` if you need non-default paths or Bitcoin Core RPC access. The dash
 uses Bitcoin Core RPC as the primary source for block fee, transaction count, and
 network hashrate data. If RPC is unavailable, it falls back to mempool.space
 where an equivalent public endpoint exists, then keeps the last known good
-in-memory values during refresh failures. BTC price uses mempool.space first and
-CoinGecko as a fallback. The dashboard node count is a global reachable-node
+in-memory values during refresh failures. BTC price uses Binance first for the
+fast `/api/price` card, with CoinGecko and mempool.space fallbacks. The
+dashboard node count is a global reachable-node
 snapshot from Bitnodes, with mempool.space Lightning statistics as a public
 fallback; local Bitcoin Core peer connections are not shown as global nodes.
+Ownership analytics are intentionally transparent: pseudonymous or research-only
+buckets are marked as estimates or limited-visibility values instead of precise
+live ownership facts.
 
 The latest worker-populated metrics are exposed at:
 
@@ -154,6 +158,18 @@ BITCOIN_RPC_URL=http://127.0.0.1:8332
 BITCOIN_RPC_USER=bitcoinuser
 BITCOIN_RPC_PASSWORD=
 ```
+
+Optional local storage variables:
+
+```env
+VIEWER_STATS_FILE=data/viewer_stats.json
+VIEW_COUNTER_FILE=data/view_counter.json
+```
+
+`VIEW_COUNTER_FILE` stores the persistent total page-view count. The app creates
+it automatically and handles missing or corrupted JSON safely. On Railway, point
+this path at a mounted persistent volume when you need the total to survive
+redeployments.
 
 Optional X posting variables for Railway:
 

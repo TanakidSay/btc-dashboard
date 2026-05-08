@@ -10,6 +10,7 @@ instance/
 logs/
 data/x_signal_state.json
 data/posted_events.json
+data/view_counter.json
 pytest-of-*/
 tmp*
 prompt.txt
