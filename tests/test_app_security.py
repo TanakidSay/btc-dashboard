@@ -5,6 +5,7 @@ from pathlib import Path
 
 from btc_dashboard.app import create_app
 from btc_dashboard.config import Settings
+from btc_dashboard.services import MetricValue, state
 
 
 def _settings(tmp_path, **overrides) -> Settings:
@@ -189,7 +190,34 @@ def test_etf_route_returns_empty_strings_for_missing_timestamps(monkeypatch, tmp
     assert response.status_code == 200
     body = response.get_json()
     assert body["latest_date"] == ""
-    assert body["updated_at"] == ""
+
+
+def test_price_route_returns_change_fields(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_btc_price_result",
+        lambda settings: MetricValue(91234.56, "binance", 1234.56, 1.57),
+    )
+    with state.lock:
+        state.btc_price = None
+        state.btc_change_24h_usd = None
+        state.btc_change_24h_percent = None
+        state.btc_price_source = "unknown"
+        state.btc_price_is_cached = True
+        state.price_points.clear()
+        state.metric_timestamps.pop("price", None)
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/price")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["price"] == 91234.56
+    assert body["change_24h_usd"] == 1234.56
+    assert body["change_24h_percent"] == 1.57
+    assert body["updated_at"]
+    assert body["source"] == "binance"
+    assert body["is_cached"] is False
 
 
 def test_x_status_route_reports_configuration(monkeypatch, tmp_path) -> None:
@@ -208,7 +236,8 @@ def test_x_status_route_reports_configuration(monkeypatch, tmp_path) -> None:
     assert body["cooldown_remaining_seconds"] == 0
     assert body["posted_events_count"] == 0
     assert body["daily_post_count"] == 0
-    assert body["daily_limit_remaining"] == 4
+    assert body["daily_limit_remaining"] == 1
+    assert body["last_post_date"] is None
     assert "last_block_reason" in body
 
 
@@ -223,7 +252,8 @@ def test_signals_policy_route(monkeypatch, tmp_path) -> None:
     assert "whale_alert" in body["allowed_signal_types"]
     assert body["thresholds"]["whale_btc"] == 500
     assert body["cooldown_minutes"] == 60
-    assert body["max_posts_per_day"] == 4
+    assert body["max_posts_per_day"] == 1
+    assert body["daily_post_hour"] == 9
 
 
 def test_x_test_post_preview_mode(monkeypatch, tmp_path) -> None:
@@ -346,7 +376,8 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "display_btc" in js
     assert "chart_categories" in js
     assert "Limited visibility" in js
-    assert 'startRefreshJob("btc-price", refreshBtcPriceMetrics, 5000)' in js
+    assert 'startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000)' in js
+    assert 'startRefreshJob("btc-price-chart", refreshPriceChart, 60000)' in js
     assert 'startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000)' in js
     assert 'startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000)' in js
     assert 'startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000)' in js

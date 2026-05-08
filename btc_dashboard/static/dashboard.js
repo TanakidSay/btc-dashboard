@@ -42,9 +42,16 @@ function formatUsd(value) {
 
 function formatSignedUsd(value) {
     const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return "Change: N/A";
+    if (!Number.isFinite(numeric)) return "N/A";
     const sign = numeric > 0 ? "+" : "";
-    return `Change: ${sign}${formatUsd(numeric)}`;
+    return `${sign}$${Math.abs(numeric).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatSignedPercent(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "N/A";
+    const sign = numeric > 0 ? "+" : "";
+    return `${sign}${numeric.toFixed(2)}%`;
 }
 
 function formatCompactUsd(value) {
@@ -306,18 +313,17 @@ function renderBtcPriceCard(data) {
     const btcPrice = document.getElementById("btcPrice");
     if (btcPrice) btcPrice.innerText = formatUsd(latest);
 
-    const prices = (data.price ?? []).map(Number).filter(Number.isFinite);
-    const latestPrice = prices.at(-1);
-    const previousPrice = prices.at(-2);
+    const changeUsd = Number(data.change_24h_usd);
+    const changePercent = Number(data.change_24h_percent);
     const priceChange = document.getElementById("btcPriceChange");
     if (priceChange) {
-        const change = Number.isFinite(latestPrice) && Number.isFinite(previousPrice)
-            ? latestPrice - previousPrice
-            : null;
-        priceChange.innerText = change === null ? "Change: N/A" : formatSignedUsd(change);
-        priceChange.className = change === null
+        const hasChange = Number.isFinite(changeUsd) && Number.isFinite(changePercent);
+        priceChange.innerText = hasChange
+            ? `${formatSignedUsd(changeUsd)} (${formatSignedPercent(changePercent)})`
+            : "N/A";
+        priceChange.className = !hasChange || changeUsd === 0
             ? "text-gray-500"
-            : change >= 0
+            : changeUsd > 0
             ? "text-green-400"
             : "text-red-400";
     }
@@ -335,7 +341,7 @@ async function initPriceChart() {
     }
     priceChart = new Chart(document.getElementById("priceChart"), {
         type: "line",
-        data: { labels: data.time ?? [], datasets: [{ label: "BTC Price", data: data.price ?? [], borderColor: "#22c55e", backgroundColor: "rgba(34,197,94,0.12)", tension: 0.25, fill: true }] },
+        data: { labels: data.time ?? [], datasets: [{ label: "BTC Price", data: data.history ?? [], borderColor: "#22c55e", backgroundColor: "rgba(34,197,94,0.12)", tension: 0.25, fill: true }] },
         options: sharedChartOptions,
     });
     renderBtcPriceCard(data);
@@ -345,7 +351,7 @@ async function updatePriceChart() {
     try {
         const data = await fetchPrice();
         priceChart.data.labels = data.time ?? [];
-        priceChart.data.datasets[0].data = data.price ?? [];
+        priceChart.data.datasets[0].data = data.history ?? [];
         priceChart.update();
     } catch (error) {
         console.error("Failed to update BTC price", error);
@@ -494,7 +500,7 @@ async function fetchTreasury() { return fetchJson("/api/treasury"); }
 async function fetchSupplyOwnership() { return fetchJson("/api/ownership"); }
 
 function institutionalInsight(etfData, treasuryData, priceData) {
-    const prices = priceData?.price ?? [];
+    const prices = priceData?.history ?? [];
     const latestPrice = Number(prices.at(-1));
     const previousPrice = Number(prices.at(-2));
     const priceRising = Number.isFinite(latestPrice) && Number.isFinite(previousPrice) && latestPrice > previousPrice;
@@ -543,7 +549,7 @@ function renderInstitutionalCards(etfData, treasuryData, priceData) {
 async function initEtfFlowChart() {
     let etfData = { flow_history: [], latest_net_flow_usd: 0, trend: "neutral", source: "fallback", updated_at: null };
     let treasuryData = { total_btc_held: 0, treasury_dominance_percent: 0, top_holders: [] };
-    let priceData = { price: [] };
+    let priceData = { history: [] };
     try {
         [etfData, treasuryData, priceData] = await Promise.all([fetchEtfFlow(), fetchTreasury(), fetchPrice()]);
     } catch (error) {
@@ -658,7 +664,7 @@ async function updateInstitutionalMetrics() {
         renderInstitutionalCards(
             { flow_history: [], latest_net_flow_usd: 0, trend: "neutral", source: "fallback", updated_at: null },
             { total_btc_held: 0, treasury_dominance_percent: 0, top_holders: [] },
-            { price: [] },
+            { history: [] },
         );
     }
 }
@@ -794,20 +800,6 @@ async function refreshPriceChart() {
     await updatePriceChart();
 }
 
-async function refreshBtcPriceMetrics() {
-    try {
-        const data = await fetchPrice();
-        renderBtcPriceCard(data);
-        if (priceChart) {
-            priceChart.data.labels = data.time ?? [];
-            priceChart.data.datasets[0].data = data.price ?? [];
-            priceChart.update();
-        }
-    } catch (error) {
-        console.error("Failed to refresh BTC price metrics", error);
-    }
-}
-
 async function refreshMempoolMetrics() {
     await Promise.allSettled([
         updateFeeChart(),
@@ -872,7 +864,9 @@ async function initDashboard() {
         updateFeeRecommendation(),
         initDonationBox(),
     ]);
-    startRefreshJob("btc-price", refreshBtcPriceMetrics, 5000);
+    updateBtcPriceCard();
+    startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000);
+    startRefreshJob("btc-price-chart", refreshPriceChart, 60000);
     startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000);
     startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000);
     startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000);

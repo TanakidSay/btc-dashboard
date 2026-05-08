@@ -46,6 +46,7 @@ class Settings:
     notification_cooldown_seconds: int = 300
     enable_x_posting: bool = False
     enable_x_test_post: bool = False
+    x_daily_post_hour: int = 9
     x_api_key: str | None = None
     x_api_secret: str | None = None
     x_access_token: str | None = None
@@ -103,6 +104,7 @@ class Settings:
             notification_cooldown_seconds=int(os.getenv("NOTIFICATION_COOLDOWN_SECONDS", "300")),
             enable_x_posting=_bool_from_env("ENABLE_X_POSTING", False),
             enable_x_test_post=_bool_from_env("ENABLE_X_TEST_POST", False),
+            x_daily_post_hour=int(os.getenv("X_DAILY_POST_HOUR", "9")),
             x_api_key=os.getenv("X_API_KEY") or None,
             x_api_secret=os.getenv("X_API_SECRET") or None,
             x_access_token=os.getenv("X_ACCESS_TOKEN") or None,

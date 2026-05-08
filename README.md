@@ -160,6 +160,7 @@ Optional X posting variables for Railway:
 ```env
 ENABLE_X_POSTING=false
 ENABLE_X_TEST_POST=false
+X_DAILY_POST_HOUR=9
 X_API_KEY=
 X_API_SECRET=
 X_ACCESS_TOKEN=

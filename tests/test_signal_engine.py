@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import datetime
+
 import pandas as pd
 
 from btc_dashboard.config import Settings
@@ -8,10 +11,13 @@ from btc_dashboard.signal_engine import (
     Signal,
     _queue_pending_signal,
     detect_signals,
+    generate_daily_dashboard_post,
     latest_signals,
+    process_daily_post,
     process_signals,
     should_auto_post_signal,
 )
+from btc_dashboard.x_poster import XPostResult
 
 
 def _settings(tmp_path, **overrides) -> Settings:
@@ -261,6 +267,138 @@ def test_latest_signals_payload_includes_detected_signals(monkeypatch, tmp_path)
     assert any(signal["signal_type"] == "etf_outflow" for signal in payload["signals"])
 
 
+def test_daily_auto_post_runs_at_most_once_per_day(monkeypatch, tmp_path) -> None:
+    calls = {"posts": 0}
+
+    def fake_post_to_x(*args, **kwargs):
+        calls["posts"] += 1
+        return XPostResult(posted=True)
+
+    _mock_daily_cached_data(monkeypatch)
+    monkeypatch.setattr("btc_dashboard.signal_engine.post_to_x", fake_post_to_x)
+    settings = _settings(tmp_path, enable_x_posting=True, x_daily_post_hour=9)
+    now = datetime(2026, 5, 8, 9, 0)
+
+    first = process_daily_post(settings, now)
+    second = process_daily_post(settings, now)
+
+    assert first["posted"] is True
+    assert second["reason"] == "already_posted_today"
+    assert calls["posts"] == 1
+
+
+def test_frequent_polling_before_daily_hour_does_not_trigger_x_post(monkeypatch, tmp_path) -> None:
+    _mock_daily_cached_data(monkeypatch)
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.post_to_x",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not post")),
+    )
+    settings = _settings(tmp_path, enable_x_posting=True, x_daily_post_hour=9)
+
+    first = process_daily_post(settings, datetime(2026, 5, 8, 8, 0))
+    second = process_daily_post(settings, datetime(2026, 5, 8, 8, 1))
+
+    assert first["reason"] == "not_due"
+    assert second["reason"] == "not_due"
+
+
+def test_daily_lock_prevents_duplicate_posts(monkeypatch, tmp_path) -> None:
+    _mock_daily_cached_data(monkeypatch)
+    today = "2026-05-08"
+    settings = _settings(tmp_path, enable_x_posting=True, x_daily_post_hour=9)
+    settings.x_signal_state_path.write_text(
+        f'{{"last_daily_post_date": "{today}"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.post_to_x",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not post")),
+    )
+
+    result = process_daily_post(settings, datetime(2026, 5, 8, 9, 0))
+
+    assert result["reason"] == "already_posted_today"
+
+
+def test_daily_post_generation_uses_cached_data(monkeypatch, tmp_path) -> None:
+    calls = {"cache": 0}
+
+    def fake_cached(cache_name):
+        calls["cache"] += 1
+        return _ownership_cache() if cache_name == "ownership_cache" else _security_cache()
+
+    monkeypatch.setattr("btc_dashboard.signal_engine.cached_dashboard_resource", fake_cached)
+    monkeypatch.setattr("btc_dashboard.signal_engine.snapshot", _daily_snapshot)
+
+    text, reason = generate_daily_dashboard_post(_settings(tmp_path))
+
+    assert reason is None
+    assert calls["cache"] == 2
+    assert "https://btcwindow.up.railway.app/" in text
+
+
+def test_daily_post_makes_no_ai_call_by_default(monkeypatch, tmp_path) -> None:
+    _mock_daily_cached_data(monkeypatch)
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.detect_signals",
+        lambda settings: (_ for _ in ()).throw(AssertionError("signal/AI path should not run")),
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.post_to_x",
+        lambda *args, **kwargs: XPostResult(posted=False, reason="x_posting_disabled"),
+    )
+
+    result = process_daily_post(_settings(tmp_path, x_daily_post_hour=9), datetime(2026, 5, 8, 9))
+
+    assert result["reason"] == "x_posting_disabled"
+
+
+def test_invalid_daily_data_prevents_post(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.signal_engine.snapshot", _daily_snapshot)
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.cached_dashboard_resource",
+        lambda cache_name: {"percent_mined": "N/A"} if cache_name == "ownership_cache" else {},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.post_to_x",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not post")),
+    )
+
+    result = process_daily_post(_settings(tmp_path, x_daily_post_hour=9), datetime(2026, 5, 8, 9))
+
+    assert result["reason"] == "invalid_core_data"
+
+
+def test_daily_post_blocks_duplicate_content_from_previous_day(monkeypatch, tmp_path) -> None:
+    _mock_daily_cached_data(monkeypatch)
+    settings = _settings(tmp_path, enable_x_posting=True, x_daily_post_hour=9)
+    text, _ = generate_daily_dashboard_post(settings)
+    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    settings.x_signal_state_path.write_text(
+        f'{{"last_daily_post_date": "2026-05-07", "last_daily_post_hash": "{text_hash}"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.post_to_x",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not post")),
+    )
+
+    result = process_daily_post(settings, datetime(2026, 5, 8, 9))
+
+    assert result["reason"] == "duplicate_daily_content"
+
+
+def test_generated_daily_post_quality_rules(monkeypatch, tmp_path) -> None:
+    _mock_daily_cached_data(monkeypatch)
+
+    text, reason = generate_daily_dashboard_post(_settings(tmp_path))
+
+    assert reason is None
+    assert "https://btcwindow.up.railway.app/" in text
+    assert len(text) <= 280
+    assert "51% attack risk" not in text.lower()
+
+
 def _safe_security():
     return {
         "double_spend": {"orphan_count": 0},
@@ -286,4 +424,41 @@ def _signal(
         immediate=immediate,
         detected_at="2026-05-05T01:00:00Z",
         source=source,
+    )
+
+
+def _daily_snapshot():
+    return {
+        "btc_price": 98_765.43,
+        "fee_data": pd.DataFrame({"height": [1], "sat_per_vbyte": [2.5]}),
+        "hashrate": 650_000_000,
+        "price_history": [97_000, 98_765.43],
+    }
+
+
+def _ownership_cache():
+    return {
+        "percent_mined": 94.29,
+        "remaining_to_mine": 1_200_000,
+        "categories": [],
+        "chart_categories": [],
+    }
+
+
+def _security_cache():
+    return {
+        "double_spend": {"orphan_count": 0},
+        "attack_51": {"top_pool_share": 0},
+        "invalid_blocks": {"invalid_count": 0},
+        "reorgs": {"reorg_count": 0},
+    }
+
+
+def _mock_daily_cached_data(monkeypatch) -> None:
+    monkeypatch.setattr("btc_dashboard.signal_engine.snapshot", _daily_snapshot)
+    monkeypatch.setattr(
+        "btc_dashboard.signal_engine.cached_dashboard_resource",
+        lambda cache_name: _ownership_cache()
+        if cache_name == "ownership_cache"
+        else _security_cache(),
     )

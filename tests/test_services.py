@@ -7,6 +7,7 @@ import requests
 
 from btc_dashboard.config import Settings
 from btc_dashboard.services import (
+    BTC_PRICE_TTL_SECONDS,
     FEE_MEMPOOL_TTL_SECONDS,
     HASHRATE_TTL_SECONDS,
     NODE_COUNT_TTL_SECONDS,
@@ -209,10 +210,14 @@ def test_get_viewer_stats_returns_zeroes_when_file_is_missing(tmp_path) -> None:
     }
 
 
-def test_get_btc_price_uses_mempool(monkeypatch, tmp_path) -> None:
+def test_get_btc_price_uses_binance(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
-        if "mempool.space" in url:
-            return FakeResponse({"USD": 98765.43})
+        if "binance.com" in url:
+            return FakeResponse({
+                "lastPrice": "98765.43",
+                "priceChange": "1234.56",
+                "priceChangePercent": "1.57",
+            })
         raise AssertionError(f"unexpected url: {url}")
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
@@ -220,10 +225,14 @@ def test_get_btc_price_uses_mempool(monkeypatch, tmp_path) -> None:
     assert get_btc_price(_settings(tmp_path)) == 98765.43
 
 
-def test_get_btc_price_result_includes_source(monkeypatch, tmp_path) -> None:
+def test_get_btc_price_result_parses_binance_change(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
-        if "mempool.space" in url:
-            return FakeResponse({"USD": 98765.43})
+        if "binance.com" in url:
+            return FakeResponse({
+                "lastPrice": "98765.43",
+                "priceChange": "1234.56",
+                "priceChangePercent": "1.57",
+            })
         raise AssertionError(f"unexpected url: {url}")
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
@@ -232,10 +241,13 @@ def test_get_btc_price_result_includes_source(monkeypatch, tmp_path) -> None:
 
     assert result is not None
     assert result.value == 98765.43
-    assert result.source == "mempool.space"
+    assert result.source == "binance"
+    assert result.change_24h_usd == 1234.56
+    assert result.change_24h_percent == 1.57
+    assert result.is_cached is False
 
 
-def test_get_btc_price_returns_none_when_mempool_fails(monkeypatch, tmp_path) -> None:
+def test_get_btc_price_returns_none_when_all_sources_fail(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
         return FakeResponse(status_code=503)
 
@@ -246,24 +258,34 @@ def test_get_btc_price_returns_none_when_mempool_fails(monkeypatch, tmp_path) ->
 
 def test_get_btc_price_falls_back_to_coingecko(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
-        if "mempool.space" in url:
+        if "binance.com" in url:
             return FakeResponse(status_code=503)
         if "coingecko.com" in url:
-            return FakeResponse({"bitcoin": {"usd": 87654.32}})
+            return FakeResponse({"bitcoin": {"usd": 87654.32, "usd_24h_change": 2.5}})
         raise AssertionError(f"unexpected url: {url}")
 
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
 
-    assert get_btc_price(_settings(tmp_path)) == 87654.32
+    result = get_btc_price_result(_settings(tmp_path))
+
+    assert result is not None
+    assert result.value == 87654.32
+    assert result.source == "coingecko"
+    assert result.change_24h_percent == 2.5
 
 
 def test_btc_price_cache_uses_five_second_cadence(monkeypatch, tmp_path) -> None:
+    assert BTC_PRICE_TTL_SECONDS == 5
     clock = {"now": 0.0}
     calls = {"count": 0}
 
     def fake_get(url: str, **kwargs) -> FakeResponse:
         calls["count"] += 1
-        return FakeResponse({"USD": 90_000 + calls["count"]})
+        return FakeResponse({
+            "lastPrice": str(90_000 + calls["count"]),
+            "priceChange": "100",
+            "priceChangePercent": "0.1",
+        })
 
     monkeypatch.setattr("btc_dashboard.services.time.monotonic", lambda: clock["now"])
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
@@ -277,6 +299,36 @@ def test_btc_price_cache_uses_five_second_cadence(monkeypatch, tmp_path) -> None
 
     assert get_btc_price(settings) == 90_002
     assert calls["count"] == 2
+
+
+def test_btc_price_preserves_valid_cached_value_when_binance_fails(monkeypatch, tmp_path) -> None:
+    clock = {"now": 0.0}
+    calls = {"count": 0}
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return FakeResponse({
+                "lastPrice": "90000",
+                "priceChange": "1200",
+                "priceChangePercent": "1.35",
+            })
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    settings = _settings(tmp_path)
+
+    first = get_btc_price_result(settings)
+    clock["now"] = BTC_PRICE_TTL_SECONDS + 0.1
+    second = get_btc_price_result(settings)
+
+    assert first is not None
+    assert second is not None
+    assert second.value == 90000
+    assert second.change_24h_usd == 1200
+    assert second.change_24h_percent == 1.35
+    assert second.is_cached is True
 
 
 def test_get_hashrate_uses_node_first(monkeypatch, tmp_path) -> None:

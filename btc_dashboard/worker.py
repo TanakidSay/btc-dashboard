@@ -32,7 +32,7 @@ if __package__:
         get_security_overview,
         state,
     )
-    from .signal_engine import process_signals
+    from .signal_engine import process_daily_post
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from btc_dashboard.config import Settings
@@ -56,7 +56,7 @@ else:
         get_security_overview,
         state,
     )
-    from btc_dashboard.signal_engine import process_signals
+    from btc_dashboard.signal_engine import process_daily_post
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ _METRIC_INTERVALS = {
     "etf": 60 * 60,
     "network": 30 * 60,
     "security": 30 * 60,
-    "signals": 30,
+    "daily_x_post": 60,
 }
 
 
@@ -97,6 +97,10 @@ def warm_local_cache(settings: Settings) -> None:
             state.table_html = table_html
             if _val(price_metric) is not None:
                 state.btc_price = _val(price_metric)
+                state.btc_change_24h_usd = price_metric.change_24h_usd
+                state.btc_change_24h_percent = price_metric.change_24h_percent
+                state.btc_price_source = price_metric.source
+                state.btc_price_is_cached = price_metric.is_cached
             if _val(hashrate_metric) is not None:
                 state.hashrate = _val(hashrate_metric)
             if hashrate_points:
@@ -177,6 +181,10 @@ def refresh_once(settings: Settings) -> None:
 
             if price_val is not None:
                 state.btc_price = price_val
+                state.btc_change_24h_usd = btc_price.change_24h_usd if btc_price else None
+                state.btc_change_24h_percent = btc_price.change_24h_percent if btc_price else None
+                state.btc_price_source = _source(btc_price)
+                state.btc_price_is_cached = bool(btc_price and btc_price.is_cached)
                 state.metric_timestamps["price"] = now_iso
             if hash_val is not None:
                 state.hashrate = hash_val
@@ -214,8 +222,8 @@ def refresh_once(settings: Settings) -> None:
 
         if fee_data is not None:
             notify_fee_spike_if_needed(fee_data, settings)
-        if _due("signals", now_monotonic):
-            process_signals(settings)
+        if _due("daily_x_post", now_monotonic):
+            process_daily_post(settings)
     except Exception:
         logger.exception("refresh_once crashed")
     finally:

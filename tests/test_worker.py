@@ -31,7 +31,7 @@ def _stub_slow_refreshes(monkeypatch) -> None:
     monkeypatch.setattr("btc_dashboard.worker.get_btc_treasury_holdings", lambda settings: {})
     monkeypatch.setattr("btc_dashboard.worker.get_btc_supply_ownership", lambda settings: {})
     monkeypatch.setattr("btc_dashboard.worker.get_security_overview", lambda settings: {})
-    monkeypatch.setattr("btc_dashboard.worker.process_signals", lambda settings: [])
+    monkeypatch.setattr("btc_dashboard.worker.process_daily_post", lambda settings: {})
 
 
 def test_notify_fee_spike_sends_once(monkeypatch) -> None:

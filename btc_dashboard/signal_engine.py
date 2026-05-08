@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -11,6 +13,7 @@ from typing import Any
 from .config import Settings
 from .services import (
     build_alerts,
+    cached_dashboard_resource,
     get_btc_treasury_holdings,
     get_etf_flow,
     get_recent_whale_transactions,
@@ -58,6 +61,7 @@ SIGNAL_SCORES = {
     "normal_informational": 0,
 }
 PENDING_SIGNAL_MAX_AGE_SECONDS = 24 * 60 * 60
+DAILY_POST_SIGNAL_TYPE = "daily_snapshot"
 
 
 @dataclass(frozen=True)
@@ -169,6 +173,113 @@ def process_signals(settings: Settings) -> list[dict[str, Any]]:
     return results
 
 
+def process_daily_post(
+    settings: Settings,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    now = now or datetime.now().astimezone()
+    today = now.date().isoformat()
+    state = _load_post_state(settings.x_signal_state_path)
+
+    if state.get("last_daily_post_date") == today:
+        logger.info("daily post skipped because already posted today")
+        return {"posted": False, "reason": "already_posted_today"}
+
+    if state.get("last_daily_attempt_date") == today:
+        logger.info("daily post skipped because already attempted today")
+        return {"posted": False, "reason": "already_attempted_today"}
+
+    post_hour = max(0, min(int(settings.x_daily_post_hour), 23))
+    if now.hour < post_hour:
+        return {"posted": False, "reason": "not_due"}
+
+    post_text, invalid_reason = generate_daily_dashboard_post(settings)
+    if not post_text:
+        logger.info("daily post skipped because data invalid: %s", invalid_reason)
+        state["last_daily_attempt_date"] = today
+        _save_post_state(settings.x_signal_state_path, state)
+        return {"posted": False, "reason": invalid_reason or "invalid_data"}
+
+    text_hash = _text_hash(post_text)
+    if state.get("last_daily_post_hash") == text_hash:
+        logger.info("daily post skipped because data invalid: duplicate daily content")
+        state["last_daily_attempt_date"] = today
+        _save_post_state(settings.x_signal_state_path, state)
+        return {"posted": False, "reason": "duplicate_daily_content", "text": post_text}
+
+    logger.info("daily post created")
+    state["last_daily_attempt_date"] = today
+    result = post_to_x(
+        post_text,
+        settings,
+        event_id=f"daily:{today}",
+        signal_type=DAILY_POST_SIGNAL_TYPE,
+        bypass_cooldown=False,
+    )
+    response = {
+        "posted": result.posted,
+        "reason": result.reason,
+        "text": post_text,
+    }
+    if result.error:
+        response["error"] = result.error
+
+    if result.posted:
+        logger.info("daily post sent successfully")
+        state["last_daily_post_date"] = today
+        state["last_daily_post_hash"] = text_hash
+        state["last_daily_posted_at"] = _utc_now_iso()
+    else:
+        logger.warning("daily post failed with error: %s", result.error or result.reason)
+
+    _save_post_state(settings.x_signal_state_path, state)
+    return response
+
+
+def generate_daily_dashboard_post(settings: Settings) -> tuple[str | None, str | None]:
+    del settings
+    data = snapshot()
+    ownership = cached_dashboard_resource("ownership_cache")
+    security = cached_dashboard_resource("security_cache")
+    percent_mined = _float_or_none(ownership.get("percent_mined"))
+    remaining_to_mine = _float_or_none(ownership.get("remaining_to_mine"))
+    if percent_mined is None or remaining_to_mine is None:
+        return None, "invalid_core_data"
+
+    price = _float_or_none(data.get("btc_price"))
+    latest_fee = _latest_fee(data.get("fee_data"))
+    security_status = _daily_security_status(security)
+
+    lines = [
+        "Daily Bitcoin Snapshot",
+        "",
+        f"BTC Price: {_format_usd(price) if price is not None else 'Limited visibility'}",
+        f"Mined Supply: {percent_mined:.2f}%",
+        f"Only {_format_btc_amount(remaining_to_mine)} BTC left to mine",
+    ]
+    if latest_fee is not None:
+        lines.append(f"Fees: {latest_fee:.1f} sat/vB")
+    lines.extend([
+        f"Network Security: {security_status}",
+        "",
+        "Live dashboard:",
+        DASHBOARD_URL,
+    ])
+    text = "\n".join(lines)
+    if len(text) > 280:
+        text = "\n".join([
+            "Bitcoin scarcity update:",
+            "",
+            f"{percent_mined:.2f}% of BTC has already been mined.",
+            f"Only {_format_btc_amount(remaining_to_mine)} BTC remain.",
+            "",
+            f"Track supply, fees, network health, and ownership: {DASHBOARD_URL}",
+        ])
+    if len(text) > 280:
+        return None, "post_too_long"
+    return text, None
+
+
 def latest_signals(settings: Settings) -> dict[str, Any]:
     return {
         "signals": [asdict(signal) for signal in detect_signals(settings)],
@@ -191,8 +302,9 @@ def signals_policy() -> dict[str, Any]:
         },
         "scoring": SIGNAL_SCORES,
         "cooldown_minutes": NORMAL_COOLDOWN_SECONDS // 60,
-        "max_posts_per_day": 4,
+        "max_posts_per_day": 1,
         "blocked_signal_types": AUTO_POST_BLOCKED_SIGNAL_TYPES,
+        "daily_post_hour": int(os.getenv("X_DAILY_POST_HOUR", "9")),
     }
 
 
@@ -557,6 +669,8 @@ def _public_post_state(state: dict[str, Any]) -> dict[str, Any]:
         "posted_key_count": len(state.get("posted_keys", [])),
         "last_normal_posted_at": state.get("last_normal_posted_at"),
         "last_post": state.get("last_post"),
+        "last_daily_post_date": state.get("last_daily_post_date"),
+        "last_daily_attempt_date": state.get("last_daily_attempt_date"),
     }
 
 
@@ -574,6 +688,34 @@ def _fit_post(text: str) -> str:
     suffix = f" {DASHBOARD_URL}"
     trimmed = text[: 280 - len(suffix) - 3].rstrip()
     return f"{trimmed}...{suffix}"
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _format_usd(value: float) -> str:
+    return f"${value:,.0f}"
+
+
+def _format_btc_amount(value: float) -> str:
+    return f"{round(value):,}"
+
+
+def _daily_security_status(security: dict[str, Any]) -> str:
+    if not isinstance(security, dict) or not security:
+        return "Limited visibility"
+    event_count = (
+        _int_or_zero((security.get("double_spend") or {}).get("orphan_count"))
+        + _int_or_zero((security.get("invalid_blocks") or {}).get("invalid_count"))
+        + _int_or_zero((security.get("reorgs") or {}).get("reorg_count"))
+    )
+    if event_count > 0:
+        return f"{event_count} event(s) under review"
+    top_pool_share = _float_or_none((security.get("attack_51") or {}).get("top_pool_share"))
+    if top_pool_share is not None and top_pool_share > MINING_POOL_SHARE_THRESHOLD:
+        return f"mining pool concentration {top_pool_share:.1f}%"
+    return "normal"
 
 
 def _float_or_none(value: Any) -> float | None:

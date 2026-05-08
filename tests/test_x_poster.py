@@ -70,7 +70,7 @@ def test_x_poster_blocks_280_character_limit(tmp_path) -> None:
     assert result.reason == "x_text_too_long"
 
 
-def test_x_poster_cooldown_blocks_normal_signal(monkeypatch, tmp_path) -> None:
+def test_x_poster_daily_limit_blocks_second_normal_signal(monkeypatch, tmp_path) -> None:
     _install_fake_tweepy(monkeypatch)
     settings = _posting_settings(tmp_path)
 
@@ -79,7 +79,7 @@ def test_x_poster_cooldown_blocks_normal_signal(monkeypatch, tmp_path) -> None:
 
     assert first.posted is True
     assert second.posted is False
-    assert second.reason == "cooldown_active"
+    assert second.reason == "daily_limit_reached"
 
 
 def test_x_poster_mega_whale_bypasses_cooldown(monkeypatch, tmp_path) -> None:
@@ -105,13 +105,12 @@ def test_x_poster_daily_limit_enforced(monkeypatch, tmp_path) -> None:
     now = datetime.now(UTC).replace(microsecond=0)
     events = [
         {
-            "event_id": f"event-{index}",
+            "event_id": "event-0",
             "signal_type": "fee_spike",
-            "text_hash": f"hash-{index}",
-            "posted_at": (now - timedelta(hours=index + 2)).isoformat().replace("+00:00", "Z"),
+            "text_hash": "hash-0",
+            "posted_at": (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
             "bypass_cooldown": False,
         }
-        for index in range(4)
     ]
     settings.x_posted_events_path.write_text(json.dumps({"events": events}), encoding="utf-8")
 
@@ -136,7 +135,8 @@ def test_x_poster_daily_limit_enforced(monkeypatch, tmp_path) -> None:
     assert blocked.reason == "daily_limit_reached"
     assert bypassed.posted is True
     assert mega.posted is True
-    assert status["daily_post_count"] == 4
+    assert status["max_posts_per_day"] == 1
+    assert status["daily_post_count"] == 1
     assert status["daily_limit_remaining"] == 0
 
 

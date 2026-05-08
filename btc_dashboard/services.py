@@ -7,7 +7,7 @@ import re
 import time
 from collections import deque
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from html import unescape
 from pathlib import Path
@@ -54,6 +54,7 @@ INSTITUTIONAL_TTL_SECONDS = 60 * 60
 SECURITY_TTL_SECONDS = 30 * 60
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
+BINANCE_BTC_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
 COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/flow-history"
 SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
@@ -158,6 +159,9 @@ class CacheEntry:
 class MetricValue:
     value: Any
     source: str
+    change_24h_usd: float | None = None
+    change_24h_percent: float | None = None
+    is_cached: bool = False
 
 
 @dataclass
@@ -175,6 +179,10 @@ class DashboardState:
     hashrate: float | None = None
     node_count: int | str | None = None
     btc_price: float | None = None
+    btc_change_24h_usd: float | None = None
+    btc_change_24h_percent: float | None = None
+    btc_price_source: str = "unknown"
+    btc_price_is_cached: bool = True
     hashrate_history: deque[float] = field(default_factory=deque)
     price_history: deque[float] = field(default_factory=deque)
     time_labels: deque[str] = field(default_factory=deque)
@@ -348,20 +356,20 @@ def _cached(key: str, settings: Settings, loader):
 def _cached_for(key: str, ttl_seconds: int, loader, refresh_log: str | None = None):
     cached_value = _cache_get(key)
     if cached_value is not None:
-        return cached_value
+        return _cache_mark_cached(cached_value)
     stale_value = _cache_peek(key)
     with _cache_lock:
         if key in _cache_refreshing:
             if stale_value is not None:
-                logger.debug("cache refresh skipped key=%s reason=already_running", key)
-                return stale_value
+                logger.info("refresh skipped key=%s reason=already_running", key)
+                return _cache_mark_cached(stale_value)
             raise RuntimeError(f"{key} refresh already running")
         _cache_refreshing.add(key)
     try:
         loaded_value = loader()
         if _cache_value_is_empty(loaded_value) and not _cache_value_is_empty(stale_value):
             logger.warning("cache refresh kept stale key=%s reason=empty_refresh", key)
-            return stale_value
+            return _cache_mark_cached(stale_value)
         _cache_set(key, loaded_value, ttl_seconds)
         if refresh_log:
             logger.info(refresh_log)
@@ -369,11 +377,17 @@ def _cached_for(key: str, ttl_seconds: int, loader, refresh_log: str | None = No
     except Exception as exc:
         if stale_value is not None:
             logger.warning("cache refresh failed key=%s; serving stale: %s", key, exc)
-            return stale_value
+            return _cache_mark_cached(stale_value)
         raise
     finally:
         with _cache_lock:
             _cache_refreshing.discard(key)
+
+
+def _cache_mark_cached(value: Any) -> Any:
+    if isinstance(value, MetricValue):
+        return replace(value, is_cached=True)
+    return value
 
 
 def _cache_value_is_empty(value: Any) -> bool:
@@ -671,10 +685,11 @@ def get_btc_price_result(settings: Settings) -> MetricValue | None:
     )
 
 
-def _get_btc_price_with_fallbacks(settings: Settings) -> float | None:
+def _get_btc_price_with_fallbacks(settings: Settings) -> MetricValue | None:
     providers = (
-        _get_btc_price_from_mempool,
+        _get_btc_price_from_binance,
         _get_btc_price_from_coingecko,
+        _get_btc_price_from_mempool,
     )
     for provider in providers:
         try:
@@ -683,8 +698,20 @@ def _get_btc_price_with_fallbacks(settings: Settings) -> float | None:
             logger.warning("%s failed: %s", provider.__name__, exc)
             continue
         if price is not None:
+            if isinstance(price, MetricValue):
+                return price
             return MetricValue(price, _provider_source(provider.__name__))
     return None
+
+
+def _get_btc_price_from_binance(settings: Settings) -> MetricValue:
+    data = _get_json(BINANCE_BTC_TICKER_URL, settings)
+    return MetricValue(
+        value=float(data["lastPrice"]),
+        source="binance",
+        change_24h_usd=float(data["priceChange"]),
+        change_24h_percent=float(data["priceChangePercent"]),
+    )
 
 
 def _get_btc_price_from_mempool(settings: Settings) -> float | None:
@@ -697,10 +724,21 @@ def _get_btc_price_from_mempool(settings: Settings) -> float | None:
 
 def _get_btc_price_from_coingecko(settings: Settings) -> float:
     data = _get_json(
-        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+        (
+            "https://api.coingecko.com/api/v3/simple/price?"
+            "ids=bitcoin&vs_currencies=usd&include_24hr_change=true"
+        ),
         settings,
     )
-    return float(data["bitcoin"]["usd"])
+    current_price = float(data["bitcoin"]["usd"])
+    change_percent = data["bitcoin"].get("usd_24h_change")
+    change_usd = None
+    if change_percent is not None:
+        percent = float(change_percent)
+        previous_price = current_price / (1 + (percent / 100))
+        change_usd = current_price - previous_price
+        return MetricValue(current_price, "coingecko", change_usd, percent)
+    return MetricValue(current_price, "coingecko")
 
 
 def get_etf_flow(settings: Settings) -> dict[str, Any]:
@@ -1225,6 +1263,10 @@ def _persistent_cache_is_fresh(cache_name: str, ttl_seconds: int) -> bool:
 def _persistent_cache_value(cache_name: str) -> Any:
     with _persistent_cache_lock:
         return deepcopy(_persistent_caches[cache_name].data)
+
+
+def cached_dashboard_resource(cache_name: str) -> Any:
+    return _persistent_cache_value(cache_name)
 
 
 def _persistent_cache_updated_at(cache_name: str) -> str | None:
@@ -2015,6 +2057,10 @@ def snapshot() -> dict[str, Any]:
             "hashrate": state.hashrate,
             "node_count": state.node_count,
             "btc_price": state.btc_price,
+            "btc_change_24h_usd": state.btc_change_24h_usd,
+            "btc_change_24h_percent": state.btc_change_24h_percent,
+            "btc_price_source": state.btc_price_source,
+            "btc_price_is_cached": state.btc_price_is_cached,
             "hashrate_history": list(state.hashrate_history),
             "price_history": list(state.price_history),
             "time_labels": list(state.time_labels),

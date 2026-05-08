@@ -19,7 +19,7 @@ REQUIRED_CREDENTIALS = {
     "X_ACCESS_SECRET": "x_access_secret",
 }
 NORMAL_COOLDOWN_SECONDS = 60 * 60
-MAX_POSTS_PER_DAY = 4
+MAX_POSTS_PER_DAY = 1
 DUPLICATE_TEXT_WINDOW = timedelta(hours=24)
 EVENT_RETENTION = timedelta(days=7)
 
@@ -132,12 +132,14 @@ def post_to_x(
 
 def get_x_status(settings: Settings) -> dict[str, object]:
     events = _load_events(settings)
+    last_post_time = _last_post_time or _last_post_time_from_events(events)
     with _status_lock:
         return {
             "enabled": settings.enable_x_posting,
             "test_enabled": settings.enable_x_test_post,
             "credentials_configured": credentials_configured(settings),
-            "last_post_time": _last_post_time or _last_post_time_from_events(events),
+            "last_post_time": last_post_time,
+            "last_post_date": _local_date_from_iso(last_post_time),
             "last_error": _last_error,
             "cooldown_remaining_seconds": _cooldown_remaining_seconds(events),
             "max_posts_per_day": MAX_POSTS_PER_DAY,
@@ -221,13 +223,13 @@ def _cooldown_remaining_seconds(events: list[dict[str, Any]]) -> int:
 
 
 def _daily_post_count(events: list[dict[str, Any]]) -> int:
-    cutoff = datetime.now(UTC) - timedelta(hours=24)
+    today = datetime.now().astimezone().date()
     return sum(
         1
         for event in events
         if not event.get("bypass_cooldown")
         and (posted_at := _parse_iso(event.get("posted_at"))) is not None
-        and posted_at >= cutoff
+        and posted_at.astimezone().date() == today
     )
 
 
@@ -242,6 +244,11 @@ def _last_post_time_from_events(events: list[dict[str, Any]]) -> str | None:
 
 def _text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _local_date_from_iso(value: str | None) -> str | None:
+    parsed = _parse_iso(value)
+    return None if parsed is None else parsed.astimezone().date().isoformat()
 
 
 def _set_posted(posted_at: str) -> None:

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 from flask import Blueprint, current_app, jsonify, render_template, request
 
 from .config import Settings
 from .services import (
+    append_metric_point,
     build_alerts,
     format_hashrate,
+    get_btc_price_result,
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
     get_etf_flow,
@@ -15,6 +19,7 @@ from .services import (
     get_viewer_stats,
     record_view,
     snapshot,
+    state,
 )
 from .signal_engine import latest_signals, pending_signal_status, signals_policy
 from .x_poster import get_x_status, post_to_x
@@ -28,6 +33,10 @@ X_TEST_POST_TEXT = (
 
 def _settings() -> Settings:
     return current_app.config["DASHBOARD_SETTINGS"]
+
+
+def _utc_now_iso() -> str:
+    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 @api.route("/")
@@ -135,24 +144,49 @@ def api_hashrate():
 @api.route("/api/price")
 def api_price():
     try:
+        metric = get_btc_price_result(_settings())
+        if metric is not None and metric.value is not None:
+            price_value = float(metric.value)
+            now_iso = _utc_now_iso()
+            with state.lock:
+                state.btc_price = price_value
+                state.btc_change_24h_usd = metric.change_24h_usd
+                state.btc_change_24h_percent = metric.change_24h_percent
+                state.btc_price_source = metric.source
+                state.btc_price_is_cached = metric.is_cached
+                if not metric.is_cached:
+                    state.metric_timestamps["price"] = now_iso
+            if not metric.is_cached:
+                append_metric_point("price", price_value, now_iso)
+
         data = snapshot()
         points = data.get("price_points", [])
         latest = data["btc_price"] if data["btc_price"] else "N/A"
         return jsonify({
             "time": [point["timestamp"] for point in points],
-            "price": [point["value"] for point in points],
+            "history": [point["value"] for point in points],
+            "price": latest,
             "latest": latest,
             "price_usd": latest,
+            "change_24h_usd": data.get("btc_change_24h_usd"),
+            "change_24h_percent": data.get("btc_change_24h_percent"),
             "updated_at": data.get("metric_timestamps", {}).get("price"),
+            "source": data.get("btc_price_source", "unknown"),
+            "is_cached": data.get("btc_price_is_cached", True),
         })
     except Exception as exc:
         current_app.logger.exception("/api/price failed: %s", exc)
         return jsonify({
             "time": [],
-            "price": [],
+            "history": [],
+            "price": "N/A",
             "latest": "N/A",
             "price_usd": "N/A",
+            "change_24h_usd": None,
+            "change_24h_percent": None,
             "updated_at": None,
+            "source": "fallback",
+            "is_cached": True,
         })
 
 
@@ -316,10 +350,11 @@ def api_x_status():
             "test_enabled": False,
             "credentials_configured": False,
             "last_post_time": None,
+            "last_post_date": None,
             "last_error": str(exc),
             "cooldown_remaining_seconds": 0,
             "daily_post_count": 0,
-            "daily_limit_remaining": 0,
+            "daily_limit_remaining": 1,
             "last_block_reason": str(exc),
             "posted_events_count": 0,
         })
