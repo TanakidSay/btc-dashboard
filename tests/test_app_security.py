@@ -376,6 +376,9 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "display_btc" in js
     assert "chart_categories" in js
     assert "Limited visibility" in js
+    assert "renderEtfFlowNote" in js
+    assert "ETF flow history is using fallback estimate data. Live data unavailable." in js
+    assert "etfChartRows" in js
     assert 'startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000)' in js
     assert 'startRefreshJob("btc-price-chart", refreshPriceChart, 60000)' in js
     assert 'startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000)' in js
@@ -383,4 +386,5 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert 'startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000)' in js
     assert 'startRefreshJob("institutional", refreshInstitutionalMetrics, 60 * 60 * 1000)' in js
     assert "supplyInsightCards" in html
+    assert "etfFlowNote" in html
     assert "Effective liquid supply" in html

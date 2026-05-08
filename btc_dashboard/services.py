@@ -72,6 +72,10 @@ FALLBACK_ETF_FLOW = {
     "trend": "neutral",
     "flow_history": [],
     "source": "fallback",
+    "is_fallback": True,
+    "is_stale": True,
+    "source_label": "Fallback estimate",
+    "data_note": "ETF flow history unavailable.",
     "updated_at": "",
     "status": "error",
     "error": "",
@@ -914,28 +918,40 @@ def _get_seeded_etf_flow() -> dict[str, Any]:
     history = [
         {
             "date": date,
-            "net_flow_usd": flow_millions * 1_000_000,
+            "net_flow_usd": round(flow_millions * 1_000_000, 2),
             "close_price": 0,
         }
         for date, flow_millions in SEEDED_ETF_FLOW_MILLIONS
     ]
-    recent_history = [row for row in history if _etf_date_is_recent(row["date"])]
-    if not recent_history:
-        raise ValueError("No fresh ETF flow source available")
-    payload = _normalize_etf_payload(recent_history[-7:], "seeded-fallback")
+    fallback_history = history[-5:]
+    if not fallback_history:
+        raise ValueError("No seeded ETF flow history available")
+    payload = _normalize_etf_payload(
+        fallback_history,
+        "seeded-fallback",
+        allow_stale=True,
+        is_fallback=True,
+    )
     payload["status"] = "stale"
     payload["error"] = "Live ETF flow sources unavailable; using seeded fallback data"
     return payload
 
 
-def _normalize_etf_payload(history: list[dict[str, Any]], source: str) -> dict[str, Any]:
+def _normalize_etf_payload(
+    history: list[dict[str, Any]],
+    source: str,
+    *,
+    allow_stale: bool = False,
+    is_fallback: bool = False,
+) -> dict[str, Any]:
     if not history:
         raise ValueError("ETF history is empty")
     history = sorted(history, key=_etf_sort_key)
     latest_row = history[-1]
     latest_flow = float(latest_row.get("net_flow_usd", 0) or 0)
     latest_date = str(latest_row.get("date") or "")
-    if not _etf_date_is_recent(latest_date):
+    is_stale = not _etf_date_is_recent(latest_date)
+    if is_stale and not allow_stale:
         raise ValueError(f"ETF data is stale: {latest_date}")
     normalized_history = [
         {
@@ -959,6 +975,14 @@ def _normalize_etf_payload(history: list[dict[str, Any]], source: str) -> dict[s
         "trend": trend,
         "flow_history": normalized_history,
         "source": source,
+        "is_fallback": is_fallback,
+        "is_stale": is_stale,
+        "source_label": "Fallback estimate" if is_fallback else "Live",
+        "data_note": (
+            "ETF flow history is using fallback estimate data. Live data unavailable."
+            if is_fallback
+            else "ETF flow history is using live source data."
+        ),
         "error": "",
     }
 

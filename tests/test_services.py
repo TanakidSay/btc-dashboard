@@ -16,6 +16,7 @@ from btc_dashboard.services import (
     _extract_globalcoinguide_date,
     _extract_millions_flow,
     _extract_walletpilot_date,
+    _normalize_etf_payload,
     _parse_farside_etf_rows_from_text,
     _parse_farside_latest_rows,
     build_alerts,
@@ -934,10 +935,18 @@ def test_get_etf_flow_uses_recent_seeded_fallback(monkeypatch, tmp_path) -> None
     assert payload["latest_date"] == "01 May 2026"
     assert payload["latest_net_flow_usd"] == 118_900_000.0
     assert payload["7d_flow"] == 543_000_000.0
+    assert len(payload["flow_history"]) == 5
+    assert payload["is_fallback"] is True
+    assert payload["is_stale"] is False
+    assert payload["source_label"] == "Fallback estimate"
+    assert "fallback estimate" in payload["data_note"]
     assert payload["flow_history"][0]["close_price"] == 0
 
 
-def test_get_etf_flow_rejects_seeded_fallback_when_seed_is_too_old(monkeypatch, tmp_path) -> None:
+def test_get_etf_flow_uses_stale_seeded_history_when_live_data_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
         return FakeResponse(status_code=503)
 
@@ -949,10 +958,30 @@ def test_get_etf_flow_rejects_seeded_fallback_when_seed_is_too_old(monkeypatch, 
 
     payload = get_etf_flow(_settings(tmp_path))
 
-    assert payload["source"] == "fallback"
-    assert payload["status"] == "error"
-    assert payload["latest_date"] == ""
-    assert "No fresh ETF flow source available" in payload["error"]
+    assert payload["source"] == "seeded-fallback"
+    assert payload["status"] == "stale"
+    assert len(payload["flow_history"]) == 5
+    assert payload["is_fallback"] is True
+    assert payload["is_stale"] is True
+    assert payload["source_label"] == "Fallback estimate"
+    assert payload["latest_date"] == "01 May 2026"
+
+
+def test_live_etf_data_still_uses_freshness_filter(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 20, tzinfo=UTC),
+    )
+
+    try:
+        _normalize_etf_payload(
+            [{"date": "01 May 2026", "net_flow_usd": 118_900_000, "close_price": 0}],
+            "live-test",
+        )
+    except ValueError as exc:
+        assert "ETF data is stale" in str(exc)
+    else:
+        raise AssertionError("stale live ETF data should be rejected")
 
 
 def test_get_hashrate_chart_points_normalizes_mempool_history(monkeypatch, tmp_path) -> None:
@@ -1020,3 +1049,5 @@ def test_get_etf_flow_uses_sosovalue_when_api_key_is_set(monkeypatch, tmp_path) 
     assert payload["latest_net_flow_usd"] == -25_000_000.0
     assert payload["7d_flow"] == 75_000_000.0
     assert payload["trend"] == "outflow"
+    assert payload["is_fallback"] is False
+    assert payload["source_label"] == "Live"

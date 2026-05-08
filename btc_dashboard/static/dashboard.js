@@ -521,7 +521,7 @@ function institutionalInsight(etfData, treasuryData, priceData) {
 
 function renderInstitutionalCards(etfData, treasuryData, priceData) {
     document.getElementById("etfNetFlow").innerText = formatCompactUsd(etfData.latest_net_flow_usd);
-    document.getElementById("etfFlowSource").innerText = `${formatMinutesAgo(etfData.updated_at)} | Source: ${etfData.source ?? "fallback"}`;
+    document.getElementById("etfFlowSource").innerText = `${formatMinutesAgo(etfData.updated_at)} | Source: ${etfData.source_label ?? etfData.source ?? "fallback"}`;
 
     const status = etfData.trend ?? etfData.status ?? "neutral";
     const statusEl = document.getElementById("etfFlowStatus");
@@ -546,6 +546,28 @@ function renderInstitutionalCards(etfData, treasuryData, priceData) {
         : `<p class="text-gray-500">Top holders unavailable.</p>`;
 }
 
+function renderEtfFlowNote(etfData) {
+    const note = document.getElementById("etfFlowNote");
+    if (!note) return;
+    const history = etfData.flow_history ?? [];
+    if (etfData.is_fallback || etfData.is_stale) {
+        note.textContent = etfData.data_note || "ETF flow history is using fallback estimate data. Live data unavailable.";
+        note.classList.remove("hidden");
+        return;
+    }
+    if (!history.length) {
+        note.textContent = "ETF flow history unavailable.";
+        note.classList.remove("hidden");
+        return;
+    }
+    note.textContent = "";
+    note.classList.add("hidden");
+}
+
+function etfChartRows(etfData) {
+    return (etfData.flow_history ?? []).filter((row) => Number.isFinite(Number(row.net_flow_usd)));
+}
+
 async function initEtfFlowChart() {
     let etfData = { flow_history: [], latest_net_flow_usd: 0, trend: "neutral", source: "fallback", updated_at: null };
     let treasuryData = { total_btc_held: 0, treasury_dominance_percent: 0, top_holders: [] };
@@ -555,7 +577,7 @@ async function initEtfFlowChart() {
     } catch (error) {
         console.error("Failed to initialize institutional metrics", error);
     }
-    const history = etfData.flow_history ?? [];
+    const history = etfChartRows(etfData);
     etfFlowChart = new Chart(document.getElementById("etfFlowChart"), {
         type: "bar",
         data: {
@@ -570,6 +592,7 @@ async function initEtfFlowChart() {
         },
         options: sharedChartOptions,
     });
+    renderEtfFlowNote(etfData);
     renderInstitutionalCards(etfData, treasuryData, priceData);
 }
 
@@ -650,7 +673,7 @@ async function initSupplyOwnershipChart() {
 async function updateInstitutionalMetrics() {
     try {
         const [etfData, treasuryData, priceData] = await Promise.all([fetchEtfFlow(), fetchTreasury(), fetchPrice()]);
-        const history = etfData.flow_history ?? [];
+        const history = etfChartRows(etfData);
         if (etfFlowChart) {
             etfFlowChart.data.labels = history.map((row) => formatFlowDate(row.date));
             etfFlowChart.data.datasets[0].data = history.map((row) => row.net_flow_usd === "N/A" ? 0 : row.net_flow_usd);
@@ -658,9 +681,11 @@ async function updateInstitutionalMetrics() {
             etfFlowChart.data.datasets[0].borderColor = history.map((row) => Number(row.net_flow_usd) < 0 ? "#ef4444" : "#22c55e");
             etfFlowChart.update();
         }
+        renderEtfFlowNote(etfData);
         renderInstitutionalCards(etfData, treasuryData, priceData);
     } catch (error) {
         console.error("Failed to update institutional metrics", error);
+        renderEtfFlowNote({ flow_history: [], is_fallback: true, is_stale: true });
         renderInstitutionalCards(
             { flow_history: [], latest_net_flow_usd: 0, trend: "neutral", source: "fallback", updated_at: null },
             { total_btc_held: 0, treasury_dominance_percent: 0, top_holders: [] },
