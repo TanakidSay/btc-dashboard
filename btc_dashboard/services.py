@@ -45,6 +45,8 @@ GOVERNMENTS_ESTIMATED_BTC = 530_000
 EXCHANGES_ESTIMATED_BTC = 2_200_000
 MINERS_ESTIMATED_BTC = 1_800_000
 ETF_MAX_AGE_DAYS = 7
+BANGKOK_UTC_OFFSET_HOURS = 7
+BANGKOK_PRICE_BASELINE_HOUR = 7
 SATS_PER_BTC = 100_000_000
 BTC_PRICE_TTL_SECONDS = 5
 FEE_MEMPOOL_TTL_SECONDS = 30
@@ -237,7 +239,15 @@ def get_viewer_stats(settings: Settings) -> dict[str, Any]:
         stats = _load_viewer_stats(settings.viewer_stats_path)
         stats["total_views"] = load_total_views(
             settings.view_counter_path,
-            fallback=int(stats.get("total_views") or 0),
+            fallback=max(
+                int(stats.get("total_views") or 0),
+                settings.view_counter_initial_total,
+            ),
+        )
+        stats["total_views"] = ensure_total_views_floor(
+            settings.view_counter_path,
+            stats["total_views"],
+            settings.view_counter_initial_total,
         )
     return _public_viewer_stats(stats)
 
@@ -252,7 +262,11 @@ def record_view(
         stats = _load_viewer_stats(settings.viewer_stats_path)
         stats["total_views"] = increment_total_views(
             settings.view_counter_path,
-            fallback=int(stats.get("total_views") or 0),
+            fallback=max(
+                int(stats.get("total_views") or 0),
+                settings.view_counter_initial_total,
+            ),
+            floor=settings.view_counter_initial_total,
         )
         if visitor_key not in stats["known_visitors"]:
             stats["known_visitors"].append(visitor_key)
@@ -293,10 +307,20 @@ def save_total_views(path: Path, total_views: int) -> None:
         logger.warning("view counter save failed: %s", exc)
 
 
-def increment_total_views(path: Path, fallback: int = 0) -> int:
-    total_views = load_total_views(path, fallback=fallback) + 1
+def increment_total_views(path: Path, fallback: int = 0, floor: int = 0) -> int:
+    total_views = ensure_total_views_floor(path, load_total_views(path, fallback=fallback), floor)
+    total_views += 1
     save_total_views(path, total_views)
     return total_views
+
+
+def ensure_total_views_floor(path: Path, total_views: int, floor: int = 0) -> int:
+    safe_total = max(int(total_views or 0), 0)
+    safe_floor = max(int(floor or 0), 0)
+    if safe_total >= safe_floor:
+        return safe_total
+    save_total_views(path, safe_floor)
+    return safe_floor
 
 
 def _load_viewer_stats(path: Path) -> dict[str, Any]:
@@ -742,8 +766,11 @@ def _get_btc_price_with_fallbacks(settings: Settings) -> MetricValue | None:
             continue
         if price is not None:
             if isinstance(price, MetricValue):
-                return price
-            return MetricValue(price, _provider_source(provider.__name__))
+                return _apply_daily_price_baseline(price, settings)
+            return _apply_daily_price_baseline(
+                MetricValue(price, _provider_source(provider.__name__)),
+                settings,
+            )
     return None
 
 
@@ -784,10 +811,67 @@ def _get_btc_price_from_coingecko(settings: Settings) -> float:
     return MetricValue(current_price, "coingecko")
 
 
+def _apply_daily_price_baseline(metric: MetricValue, settings: Settings) -> MetricValue:
+    baseline = _get_or_create_daily_price_baseline(settings.btc_price_baseline_path, metric.value)
+    if baseline <= 0:
+        return metric
+    change_usd = round(float(metric.value) - baseline, 2)
+    change_percent = round((change_usd / baseline) * 100, 4)
+    return replace(
+        metric,
+        change_24h_usd=change_usd,
+        change_24h_percent=change_percent,
+    )
+
+
+def _get_or_create_daily_price_baseline(path: Path, current_price: float) -> float:
+    session_date = _bangkok_price_session_date(_utc_now_dt())
+    baseline = _load_daily_price_baseline(path)
+    if (
+        baseline.get("session_date") == session_date
+        and _to_float_or_none(baseline.get("baseline_price_usd")) is not None
+    ):
+        return float(baseline["baseline_price_usd"])
+
+    price = float(current_price)
+    _save_daily_price_baseline(path, session_date, price)
+    return price
+
+
+def _load_daily_price_baseline(path: Path) -> dict[str, Any]:
+    try:
+        with path.open(encoding="utf-8") as file:
+            payload = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_daily_price_baseline(path: Path, session_date: str, price: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "session_date": session_date,
+        "baseline_price_usd": round(float(price), 2),
+        "locked_at": _utc_now_iso(),
+        "timezone": "Asia/Bangkok",
+        "baseline_hour": BANGKOK_PRICE_BASELINE_HOUR,
+    }
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(payload, file, indent=2)
+        file.write("\n")
+
+
+def _bangkok_price_session_date(now_utc: datetime) -> str:
+    bangkok_now = now_utc + timedelta(hours=BANGKOK_UTC_OFFSET_HOURS)
+    if bangkok_now.hour < BANGKOK_PRICE_BASELINE_HOUR:
+        bangkok_now -= timedelta(days=1)
+    return bangkok_now.date().isoformat()
+
+
 def get_etf_flow(settings: Settings) -> dict[str, Any]:
     return _cached_resource(
         "etf_cache",
-        INSTITUTIONAL_TTL_SECONDS,
+        max(settings.etf_flow_ttl_seconds, 60 * 60),
         lambda: _get_etf_flow_with_fallback(settings),
         "[CACHE] ETF refreshed",
         "[ERROR] Using cached fallback",
@@ -796,18 +880,21 @@ def get_etf_flow(settings: Settings) -> dict[str, Any]:
 
 
 def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
-    if settings.sosovalue_api_key:
-        soso_data = _get_etf_flow_from_sosovalue(settings)
-        if soso_data["source"] != "fallback":
-            return soso_data
-    if settings.coinglass_api_key:
-        coinglass_data = _get_etf_flow_from_coinglass(settings)
-        if coinglass_data["source"] != "fallback":
-            return coinglass_data
+    manual_data = _get_etf_flow_from_manual_file(settings)
+    if manual_data["source"] != "fallback":
+        return manual_data
     for loader in (_get_etf_flow_from_farside_latest, _get_etf_flow_from_farside):
         farside_data = loader(settings)
         if farside_data["source"] != "fallback":
             return farside_data
+    if settings.coinglass_api_key:
+        coinglass_data = _get_etf_flow_from_coinglass(settings)
+        if coinglass_data["source"] != "fallback":
+            return coinglass_data
+    if settings.sosovalue_api_key:
+        soso_data = _get_etf_flow_from_sosovalue(settings)
+        if soso_data["source"] != "fallback":
+            return soso_data
     for loader in (_get_etf_flow_from_walletpilot, _get_etf_flow_from_globalcoinguide):
         fallback_data = loader(settings)
         if fallback_data["source"] != "fallback":
@@ -899,6 +986,38 @@ def _get_etf_flow_from_farside_latest(settings: Settings) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Farside latest ETF request failed: %s", exc)
         fallback = FALLBACK_ETF_FLOW.copy()
+        fallback["error"] = str(exc)
+        return fallback
+
+
+def _get_etf_flow_from_manual_file(settings: Settings) -> dict[str, Any]:
+    path = settings.etf_flow_path
+    if not path.exists():
+        return deepcopy(FALLBACK_ETF_FLOW)
+
+    try:
+        with path.open(encoding="utf-8") as file:
+            data = json.load(file)
+        history = data.get("flow_history")
+        if history in (None, []):
+            return deepcopy(FALLBACK_ETF_FLOW)
+        if not isinstance(history, list):
+            raise ValueError("manual ETF flow file has no rows")
+        rows = []
+        for row in history:
+            if not isinstance(row, dict):
+                raise ValueError("manual ETF flow row must be an object")
+            rows.append({
+                "date": row.get("date"),
+                "net_flow_usd": row.get("net_flow_usd"),
+                "close_price": row.get("close_price"),
+            })
+        payload = _normalize_etf_payload(rows, "manual", allow_stale=True)
+        payload["manual_updated_at"] = str(data.get("updated_at") or "")
+        return payload
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("Manual ETF flow file invalid: %s", exc)
+        fallback = deepcopy(FALLBACK_ETF_FLOW)
         fallback["error"] = str(exc)
         return fallback
 
@@ -1007,6 +1126,10 @@ def _normalize_etf_payload(
         trend = "inflow"
     elif latest_flow < 0:
         trend = "outflow"
+    source_label = _etf_source_label(source, is_fallback)
+    data_note = _etf_data_note(source, is_fallback)
+    if is_stale:
+        data_note = f"{data_note} ETF flow data is older than expected."
     return {
         "latest_date": latest_date,
         "latest_net_flow_usd": latest_flow,
@@ -1016,14 +1139,29 @@ def _normalize_etf_payload(
         "source": source,
         "is_fallback": is_fallback,
         "is_stale": is_stale,
-        "source_label": "Fallback estimate" if is_fallback else "Live",
-        "data_note": (
-            "ETF flow history is using fallback estimate data. Live data unavailable."
-            if is_fallback
-            else "ETF flow history is using live source data."
-        ),
+        "source_label": source_label,
+        "data_note": data_note,
         "error": "",
     }
+
+
+def _etf_source_label(source: str, is_fallback: bool) -> str:
+    if is_fallback:
+        return "Fallback estimate"
+    return {
+        "coinglass": "CoinGlass",
+        "manual": "Manual",
+        "seeded-fallback": "Fallback estimate",
+    }.get(source, "Live")
+
+
+def _etf_data_note(source: str, is_fallback: bool) -> str:
+    if is_fallback:
+        return "ETF flow history is using fallback estimate data. Live data unavailable."
+    return {
+        "coinglass": "ETF flow data loaded from CoinGlass.",
+        "manual": "ETF flow data loaded from local manual file.",
+    }.get(source, "ETF flow history is using live source data.")
 
 
 def _etf_date_is_recent(value: str, max_age_days: int = ETF_MAX_AGE_DAYS) -> bool:

@@ -1,0 +1,174 @@
+# Agent Guide for btc-dashboard
+
+This file is quick working context for agents and contributors entering the
+`btc-dashboard` project. Read it first, then open the specific files relevant to
+the task.
+
+## Project Overview
+
+`btc-dashboard` is a Flask dashboard for Bitcoin analytics, including fee,
+price, hashrate, network-node metrics, ownership analytics, alerts, viewer
+tracking, and optional X posting.
+
+Important paths:
+
+- `btc_dashboard/app.py` creates the Flask app, auth, security headers, and worker startup.
+- `btc_dashboard/routes.py` contains the dashboard and JSON API routes.
+- `btc_dashboard/services.py` handles data loading, external APIs, caching, fallbacks, and alerts.
+- `btc_dashboard/signal_engine.py` builds analytic signals and post text.
+- `btc_dashboard/worker.py` runs the background refresh loop.
+- `btc_dashboard/x_poster.py` handles X posting integration and policy.
+- `btc_dashboard/config.py` maps environment variables into settings.
+- `btc_dashboard/templates/dashboard.html` is the main UI template.
+- `btc_dashboard/static/dashboard.js` handles client-side refresh and interactions.
+- `tests/` contains the Pytest suite.
+- `data/` contains local CSV/state files used by the app.
+
+## Common Commands
+
+Local setup:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+Copy-Item .env.example .env
+```
+
+Run locally:
+
+```powershell
+flask --app "btc_dashboard.app:create_app" run
+```
+
+Run with a production WSGI server on Windows:
+
+```powershell
+waitress-serve --call btc_dashboard.app:create_app
+```
+
+Quality checks:
+
+```powershell
+ruff check .
+pytest
+```
+
+On this machine, these commands are commonly used:
+
+```powershell
+py -3.12 -B -m ruff check .
+py -3.12 -B -m pytest
+```
+
+## Coding Guidelines
+
+- Use Python 3.11+ and follow the style in `pyproject.toml`.
+- Ruff is configured with `E`, `F`, `I`, `UP`, and `B`; line length is 100.
+- When changing behavior in `services.py`, `routes.py`, `worker.py`,
+  `signal_engine.py`, or `x_poster.py`, update or add focused tests.
+- Be careful with the background worker. Tests should disable or control worker
+  startup when a thread is not part of the behavior under test.
+- Never hardcode secrets, API keys, webhook URLs, or credentials.
+- Do not commit `.env`, caches, logs, or unnecessary generated state.
+- If UI behavior changes, inspect both `dashboard.html` and `dashboard.js`.
+- If an API response shape changes, update the tests and the frontend consumer
+  together.
+
+## Data Sources and Fallbacks
+
+The app is designed to tolerate external data-source failures:
+
+- Bitcoin Core RPC is the primary source for block fees, transaction counts, and hashrate.
+- If RPC is unavailable, public fallbacks such as mempool.space are used where equivalent endpoints exist.
+- BTC price uses Binance first, then falls back to CoinGecko and mempool.space.
+- Node count uses Bitnodes as a global reachable-node snapshot.
+- Ownership analytics must remain transparent. Estimates and limited-visibility values
+  should never be presented as exact live ownership facts.
+- During refresh failures, preserve last known good values where the existing design supports it.
+
+When adding a fallback, make the source, freshness, and failure mode clear in
+code or tests.
+
+## Important Environment Variables
+
+See `.env.example` and `btc_dashboard/config.py` for the complete list.
+
+Commonly relevant variables:
+
+- `SECRET_KEY`
+- `DASHBOARD_USERNAME`
+- `DASHBOARD_PASSWORD`
+- `DASHBOARD_API_TOKEN`
+- `START_WORKER`
+- `BITCOIN_RPC_URL`
+- `BITCOIN_RPC_USER`
+- `BITCOIN_RPC_PASSWORD`
+- `FEE_SPIKE_THRESHOLD`
+- `WHALE_ALERT_THRESHOLD_BTC`
+- `NOTIFICATION_WEBHOOK_URL`
+- `ENABLE_X_POSTING`
+- `ENABLE_X_TEST_POST`
+- `X_API_KEY`
+- `X_API_SECRET`
+- `X_ACCESS_TOKEN`
+- `X_ACCESS_SECRET`
+- `COINGLASS_API_KEY`
+- `COINGECKO_DEMO_API_KEY`
+- `SOSOVALUE_API_KEY`
+
+Production must use real secrets and dashboard authentication.
+
+## Security Notes
+
+- `btc_dashboard/app.py` provides Basic Auth, Bearer token auth, and security headers.
+- `/healthz` is intentionally accessible without auth for health checks.
+- Never expose Bitcoin Core RPC port `8332` directly to the internet.
+- Production should run behind HTTPS through a reverse proxy such as Caddy,
+  Nginx, or Cloudflare.
+- Do not weaken CSP or other security headers unless the reason is clear and
+  covered by tests.
+
+## Testing Notes
+
+Choose tests based on the area changed:
+
+- Routes, auth, and security: `tests/test_app_security.py`
+- Services, data, fallbacks, and alerts: `tests/test_services.py`
+- Frontend refresh contract: `tests/test_frontend_price_refresh.py`
+- Worker behavior: `tests/test_worker.py`
+- Signal logic: `tests/test_signal_engine.py`
+- X posting policy: `tests/test_x_poster.py`
+
+Before handing off, run at least:
+
+```powershell
+py -3.12 -B -m ruff check .
+py -3.12 -B -m pytest
+```
+
+If checks cannot be run, record the reason clearly.
+
+## Deployment Notes
+
+The repo includes deployment files for multiple hosts:
+
+- `Procfile`
+- `railway.toml`
+- `render.yaml`
+- `runtime.txt`
+- `deploy/Caddyfile`
+
+Health check paths may be `/health` or `/healthz` depending on the host/config.
+Check the actual route definitions in `btc_dashboard/routes.py` before changing
+deployment settings.
+
+## Working Agreement
+
+- Start with `git status --short` and preserve any existing user changes.
+- Use `rg` and `rg --files` for searches.
+- Keep changes scoped to the request.
+- Avoid unrelated refactors.
+- Verify current external facts before relying on data that may have changed,
+  including prices, ETF data, API behavior, laws, or hosting-platform behavior.
+- Final responses should briefly state what changed and which checks were run.

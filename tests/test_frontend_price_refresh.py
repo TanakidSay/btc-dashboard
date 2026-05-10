@@ -37,3 +37,16 @@ def test_frontend_prevents_duplicate_price_polling_intervals() -> None:
     assert "const refreshJobs = new Map();" in dashboard_js
     assert "if (refreshJobs.has(name))" in dashboard_js
     assert "previous run still active" in dashboard_js
+
+
+def test_frontend_renders_etf_source_label_and_note() -> None:
+    dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+    dashboard_html = (ROOT / "btc_dashboard/templates/dashboard.html").read_text(
+        encoding="utf-8",
+    )
+
+    assert "etfFlowSource" in dashboard_html
+    assert "etfFlowNote" in dashboard_html
+    assert "etfData.source_label" in dashboard_js
+    assert "etfData.data_note" in dashboard_js
+    assert "etfData.is_fallback || etfData.is_stale" in dashboard_js

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
@@ -180,6 +181,10 @@ def _settings(tmp_path, **overrides) -> Settings:
         "fee_csv_path": tmp_path / "fees.csv",
         "viewer_stats_path": tmp_path / "viewer_stats.json",
         "view_counter_path": tmp_path / "view_counter.json",
+        "etf_flow_path": tmp_path / "etf_flows.json",
+        "btc_price_baseline_path": tmp_path / "btc_price_baseline.json",
+        "etf_flow_ttl_seconds": 12 * 60 * 60,
+        "view_counter_initial_total": 0,
         "start_worker": False,
         "bitcoin_rpc_password": "test",
         "cache_ttl_seconds": 30,
@@ -188,6 +193,19 @@ def _settings(tmp_path, **overrides) -> Settings:
     values.update(overrides)
     return Settings(
         **values,
+    )
+
+
+def _write_price_baseline(path, session_date: str, price: float) -> None:
+    path.write_text(
+        json.dumps({
+            "session_date": session_date,
+            "baseline_price_usd": price,
+            "locked_at": f"{session_date}T00:00:00Z",
+            "timezone": "Asia/Bangkok",
+            "baseline_hour": 7,
+        }),
+        encoding="utf-8",
     )
 
 
@@ -214,6 +232,31 @@ def test_get_viewer_stats_returns_zeroes_when_file_is_missing(tmp_path) -> None:
         "last_viewed_at": None,
     }
     assert settings.view_counter_path.exists()
+
+
+def test_view_counter_initial_total_seeds_missing_counter_file(tmp_path) -> None:
+    settings = _settings(tmp_path, view_counter_initial_total=174)
+
+    assert get_viewer_stats(settings)["total_views"] == 174
+    assert record_view(settings, "127.0.0.1", "BrowserA")["total_views"] == 175
+    assert load_total_views(settings.view_counter_path) == 175
+
+
+def test_view_counter_initial_total_raises_lower_existing_counter(tmp_path) -> None:
+    settings = _settings(tmp_path, view_counter_initial_total=182)
+    save_total_views(settings.view_counter_path, 174)
+
+    assert get_viewer_stats(settings)["total_views"] == 182
+    assert record_view(settings, "127.0.0.1", "BrowserA")["total_views"] == 183
+    assert load_total_views(settings.view_counter_path) == 183
+
+
+def test_view_counter_initial_total_does_not_lower_existing_counter(tmp_path) -> None:
+    settings = _settings(tmp_path, view_counter_initial_total=182)
+    save_total_views(settings.view_counter_path, 200)
+
+    assert get_viewer_stats(settings)["total_views"] == 200
+    assert record_view(settings, "127.0.0.1", "BrowserA")["total_views"] == 201
 
 
 def test_total_view_counter_persists_after_restart_simulation(tmp_path) -> None:
@@ -262,26 +305,93 @@ def test_get_btc_price_uses_binance(monkeypatch, tmp_path) -> None:
     assert get_btc_price(_settings(tmp_path)) == 98765.43
 
 
-def test_get_btc_price_result_parses_binance_change(monkeypatch, tmp_path) -> None:
+def test_get_btc_price_result_uses_daily_baseline_change(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
         if "binance.com" in url:
             return FakeResponse({
                 "lastPrice": "98765.43",
-                "priceChange": "1234.56",
-                "priceChangePercent": "1.57",
+                "priceChange": "0",
+                "priceChangePercent": "0",
             })
         raise AssertionError(f"unexpected url: {url}")
 
+    baseline_path = tmp_path / "btc_price_baseline.json"
+    _write_price_baseline(baseline_path, "2026-05-10", 97_500.00)
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, 8, tzinfo=UTC),
+    )
 
-    result = get_btc_price_result(_settings(tmp_path))
+    result = get_btc_price_result(_settings(tmp_path, btc_price_baseline_path=baseline_path))
 
     assert result is not None
     assert result.value == 98765.43
     assert result.source == "binance"
-    assert result.change_24h_usd == 1234.56
-    assert result.change_24h_percent == 1.57
+    assert result.change_24h_usd == 1265.43
+    assert result.change_24h_percent == 1.2979
     assert result.is_cached is False
+
+
+def test_get_btc_price_result_creates_daily_baseline_when_missing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "binance.com" in url:
+            return FakeResponse({
+                "lastPrice": "98765.43",
+                "priceChange": "1000",
+                "priceChangePercent": "1",
+            })
+        raise AssertionError(f"unexpected url: {url}")
+
+    baseline_path = tmp_path / "btc_price_baseline.json"
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, 0, 1, tzinfo=UTC),
+    )
+    monkeypatch.setattr("btc_dashboard.services._utc_now_iso", lambda: "2026-05-10T00:01:00Z")
+
+    result = get_btc_price_result(_settings(tmp_path, btc_price_baseline_path=baseline_path))
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    assert result is not None
+    assert result.change_24h_usd == 0
+    assert result.change_24h_percent == 0
+    assert payload["session_date"] == "2026-05-10"
+    assert payload["baseline_price_usd"] == 98765.43
+
+
+def test_get_btc_price_result_rolls_baseline_at_seven_bangkok(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "binance.com" in url:
+            return FakeResponse({
+                "lastPrice": "100000",
+                "priceChange": "1000",
+                "priceChangePercent": "1",
+            })
+        raise AssertionError(f"unexpected url: {url}")
+
+    baseline_path = tmp_path / "btc_price_baseline.json"
+    _write_price_baseline(baseline_path, "2026-05-09", 95_000)
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, 0, 0, tzinfo=UTC),
+    )
+
+    result = get_btc_price_result(_settings(tmp_path, btc_price_baseline_path=baseline_path))
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    assert result is not None
+    assert result.change_24h_usd == 0
+    assert payload["session_date"] == "2026-05-10"
+    assert payload["baseline_price_usd"] == 100000
 
 
 def test_get_btc_price_returns_none_when_all_sources_fail(monkeypatch, tmp_path) -> None:
@@ -301,9 +411,15 @@ def test_get_btc_price_falls_back_to_coingecko(monkeypatch, tmp_path) -> None:
             return FakeResponse({"bitcoin": {"usd": 87654.32, "usd_24h_change": 2.5}})
         raise AssertionError(f"unexpected url: {url}")
 
+    baseline_path = tmp_path / "btc_price_baseline.json"
+    _write_price_baseline(baseline_path, "2026-05-10", 85_516.41)
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, 8, tzinfo=UTC),
+    )
 
-    result = get_btc_price_result(_settings(tmp_path))
+    result = get_btc_price_result(_settings(tmp_path, btc_price_baseline_path=baseline_path))
 
     assert result is not None
     assert result.value == 87654.32
@@ -352,9 +468,15 @@ def test_btc_price_preserves_valid_cached_value_when_binance_fails(monkeypatch, 
             })
         return FakeResponse(status_code=503)
 
+    baseline_path = tmp_path / "btc_price_baseline.json"
+    _write_price_baseline(baseline_path, "2026-05-10", 88_800)
     monkeypatch.setattr("btc_dashboard.services.time.monotonic", lambda: clock["now"])
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
-    settings = _settings(tmp_path)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, 8, tzinfo=UTC),
+    )
+    settings = _settings(tmp_path, btc_price_baseline_path=baseline_path)
 
     first = get_btc_price_result(settings)
     clock["now"] = BTC_PRICE_TTL_SECONDS + 0.1
@@ -364,7 +486,7 @@ def test_btc_price_preserves_valid_cached_value_when_binance_fails(monkeypatch, 
     assert second is not None
     assert second.value == 90000
     assert second.change_24h_usd == 1200
-    assert second.change_24h_percent == 1.35
+    assert second.change_24h_percent == 1.3514
     assert second.is_cached is True
 
 
@@ -976,6 +1098,182 @@ def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path
     assert payload["7d_flow"] == 2_100_000_000.0
 
 
+def test_get_etf_flow_uses_manual_json_before_farside(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        raise AssertionError(f"manual ETF file should avoid network request: {url}")
+
+    manual_path = tmp_path / "etf_flows.json"
+    manual_path.write_text(
+        json.dumps({
+            "source": "manual",
+            "updated_at": "2026-05-10T00:00:00Z",
+            "flow_history": [
+                {"date": "2026-05-08", "net_flow_usd": -45_000_000},
+                {"date": "2026-05-09", "net_flow_usd": 123_000_000},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path, etf_flow_path=manual_path))
+
+    assert payload["source"] == "manual"
+    assert payload["source_label"] == "Manual"
+    assert payload["is_fallback"] is False
+    assert payload["is_stale"] is False
+    assert payload["latest_date"] == "2026-05-09"
+    assert payload["latest_net_flow_usd"] == 123_000_000.0
+    assert payload["7d_flow"] == 78_000_000.0
+    assert payload["data_note"] == "ETF flow data loaded from local manual file."
+
+
+def test_get_etf_flow_empty_manual_file_skips_to_farside_without_warning(
+    monkeypatch,
+    tmp_path,
+    caplog,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk/btc/" in url:
+            return FakeResponse(text="09 May 2026 123.0 0.0 0.0 0.0 123.0")
+        return FakeResponse(status_code=503)
+
+    manual_path = tmp_path / "etf_flows.json"
+    manual_path.write_text(
+        json.dumps({
+            "source": "manual",
+            "updated_at": "",
+            "flow_history": [],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, tzinfo=UTC),
+    )
+
+    with caplog.at_level("WARNING"):
+        payload = get_etf_flow(_settings(tmp_path, etf_flow_path=manual_path))
+
+    assert payload["source"] == "farside-latest"
+    assert "manual ETF flow file has no rows" not in caplog.text
+
+
+def test_get_etf_flow_missing_coinglass_key_is_skipped_cleanly(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    requested_urls = []
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        requested_urls.append(url)
+        if "farside.co.uk" in url:
+            return FakeResponse(status_code=403)
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "seeded-fallback"
+    assert not any("coinglass" in url.lower() for url in requested_urls)
+
+
+def test_get_etf_flow_ttl_is_clamped_to_one_hour(monkeypatch, tmp_path) -> None:
+    requests_made = 0
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        nonlocal requests_made
+        requests_made += 1
+        return FakeResponse(status_code=503)
+
+    now = 1_000.0
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services.time.time", lambda: now)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
+    settings = _settings(tmp_path, etf_flow_ttl_seconds=5)
+
+    first = get_etf_flow(settings)
+    second = get_etf_flow(settings)
+
+    assert first["source"] == "seeded-fallback"
+    assert second["source"] == "seeded-fallback"
+    assert requests_made > 0
+    requests_after_first_refresh = requests_made
+    get_etf_flow(settings)
+    assert requests_made == requests_after_first_refresh
+
+
+def test_get_etf_flow_invalid_manual_json_falls_back_safely(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    manual_path = tmp_path / "etf_flows.json"
+    manual_path.write_text("{not-json", encoding="utf-8")
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 4, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path, etf_flow_path=manual_path))
+
+    assert payload["source"] == "seeded-fallback"
+    assert payload["source_label"] == "Fallback estimate"
+    assert payload["is_fallback"] is True
+
+
+def test_get_etf_flow_stale_manual_json_is_marked_stale(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk" in url:
+            return FakeResponse(status_code=403)
+        raise AssertionError(f"unexpected ETF source after manual file: {url}")
+
+    manual_path = tmp_path / "etf_flows.json"
+    manual_path.write_text(
+        json.dumps({
+            "source": "manual",
+            "updated_at": "2026-05-10T00:00:00Z",
+            "flow_history": [{"date": "2026-05-01", "net_flow_usd": 123_000_000}],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 20, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path, etf_flow_path=manual_path))
+
+    assert payload["source"] == "manual"
+    assert payload["source_label"] == "Manual"
+    assert payload["is_fallback"] is False
+    assert payload["is_stale"] is True
+    assert "older than expected" in payload["data_note"]
+
+
 def test_get_etf_flow_uses_recent_seeded_fallback(monkeypatch, tmp_path) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
         return FakeResponse(status_code=503)
@@ -1082,6 +1380,11 @@ def test_get_etf_flow_uses_farside_latest_text_fallback(monkeypatch, tmp_path) -
 
 
 def test_get_etf_flow_uses_sosovalue_when_api_key_is_set(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk" in url:
+            return FakeResponse(status_code=403)
+        return FakeResponse(status_code=503)
+
     def fake_post(url: str, **kwargs) -> FakeResponse:
         return FakeResponse({
             "code": 0,
@@ -1094,6 +1397,7 @@ def test_get_etf_flow_uses_sosovalue_when_api_key_is_set(monkeypatch, tmp_path) 
             },
         })
 
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
     monkeypatch.setattr("btc_dashboard.services.session.post", fake_post)
     monkeypatch.setattr(
         "btc_dashboard.services._utc_now_dt",

@@ -26,6 +26,8 @@ class Settings:
     fee_csv_path: Path
     viewer_stats_path: Path = BASE_DIR / "data/viewer_stats.json"
     view_counter_path: Path = BASE_DIR / "data/view_counter.json"
+    etf_flow_path: Path = BASE_DIR / "data/etf_flows.json"
+    btc_price_baseline_path: Path = BASE_DIR / "data/btc_price_baseline.json"
     dashboard_username: str | None = None
     dashboard_password: str | None = None
     dashboard_api_token: str | None = None
@@ -36,6 +38,8 @@ class Settings:
     refresh_seconds: int = 5
     request_timeout: int = 5
     cache_ttl_seconds: int = 30
+    etf_flow_ttl_seconds: int = 12 * 60 * 60
+    view_counter_initial_total: int = 0
     node_block_count: int = 10
     max_csv_rows: int = 100
     max_table_rows: int = 20
@@ -80,6 +84,14 @@ class Settings:
         view_counter_path = Path(os.getenv("VIEW_COUNTER_FILE", "data/view_counter.json"))
         if not view_counter_path.is_absolute():
             view_counter_path = BASE_DIR / view_counter_path
+        etf_flow_path = Path(os.getenv("ETF_FLOW_FILE", "data/etf_flows.json"))
+        if not etf_flow_path.is_absolute():
+            etf_flow_path = BASE_DIR / etf_flow_path
+        btc_price_baseline_path = Path(
+            os.getenv("BTC_PRICE_BASELINE_FILE", "data/btc_price_baseline.json"),
+        )
+        if not btc_price_baseline_path.is_absolute():
+            btc_price_baseline_path = BASE_DIR / btc_price_baseline_path
         x_signal_state_path = Path(os.getenv("X_SIGNAL_STATE_FILE", "data/x_signal_state.json"))
         if not x_signal_state_path.is_absolute():
             x_signal_state_path = BASE_DIR / x_signal_state_path
@@ -92,6 +104,8 @@ class Settings:
             fee_csv_path=csv_path,
             viewer_stats_path=viewer_stats_path,
             view_counter_path=view_counter_path,
+            etf_flow_path=etf_flow_path,
+            btc_price_baseline_path=btc_price_baseline_path,
             dashboard_username=os.getenv("DASHBOARD_USERNAME") or None,
             dashboard_password=os.getenv("DASHBOARD_PASSWORD") or None,
             dashboard_api_token=os.getenv("DASHBOARD_API_TOKEN") or None,
@@ -102,6 +116,8 @@ class Settings:
             refresh_seconds=int(os.getenv("DASHBOARD_REFRESH_SECONDS", "5")),
             request_timeout=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "5")),
             cache_ttl_seconds=int(os.getenv("CACHE_TTL_SECONDS", "30")),
+            etf_flow_ttl_seconds=int(os.getenv("ETF_FLOW_TTL_SECONDS", str(12 * 60 * 60))),
+            view_counter_initial_total=int(os.getenv("VIEW_COUNTER_INITIAL_TOTAL", "0")),
             node_block_count=int(os.getenv("NODE_BLOCK_COUNT", "10")),
             fee_spike_threshold=float(os.getenv("FEE_SPIKE_THRESHOLD", "5")),
             whale_alert_threshold_btc=float(os.getenv("WHALE_ALERT_THRESHOLD_BTC", "100")),

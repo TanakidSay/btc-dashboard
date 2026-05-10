@@ -164,12 +164,35 @@ Optional local storage variables:
 ```env
 VIEWER_STATS_FILE=data/viewer_stats.json
 VIEW_COUNTER_FILE=data/view_counter.json
+VIEW_COUNTER_INITIAL_TOTAL=0
+ETF_FLOW_FILE=data/etf_flows.json
+BTC_PRICE_BASELINE_FILE=data/btc_price_baseline.json
+ETF_FLOW_TTL_SECONDS=43200
 ```
 
 `VIEW_COUNTER_FILE` stores the persistent total page-view count. The app creates
 it automatically and handles missing or corrupted JSON safely. On Railway, point
 this path at a mounted persistent volume when you need the total to survive
-redeployments.
+redeployments. `VIEW_COUNTER_INITIAL_TOTAL` seeds a missing counter file once,
+which is useful when moving an existing deployment to a persistent volume.
+
+`ETF_FLOW_FILE` is an optional manual ETF flow file. If it contains valid rows,
+the dashboard uses it before live ETF scraping so production hosts do not depend
+on Farside availability. This is useful because ETF flow is daily market data,
+not a real-time price feed. The dashboard labels this data as `Manual`, not live
+data. `ETF_FLOW_TTL_SECONDS` controls backend ETF refresh cadence and is clamped
+to a one-hour minimum.
+
+```json
+{
+  "source": "manual",
+  "updated_at": "2026-05-10T00:00:00Z",
+  "flow_history": [
+    {"date": "2026-05-09", "net_flow_usd": 123000000},
+    {"date": "2026-05-08", "net_flow_usd": -45000000}
+  ]
+}
+```
 
 Optional X posting variables for Railway:
 
