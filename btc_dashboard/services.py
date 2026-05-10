@@ -272,6 +272,10 @@ def load_fee_data(path: Path, max_rows: int) -> pd.DataFrame:
 def get_viewer_stats(settings: Settings) -> dict[str, Any]:
     with _viewer_lock:
         stats = _load_viewer_stats(settings.viewer_stats_path)
+        stats = _ensure_unique_visitors_floor(
+            stats,
+            settings.viewer_stats_initial_unique,
+        )
         stats["total_views"] = load_total_views(
             settings.view_counter_path,
             fallback=max(
@@ -284,6 +288,7 @@ def get_viewer_stats(settings: Settings) -> dict[str, Any]:
             stats["total_views"],
             settings.view_counter_initial_total,
         )
+        _save_viewer_stats(settings.viewer_stats_path, stats)
     return _public_viewer_stats(stats)
 
 
@@ -295,6 +300,10 @@ def record_view(
     visitor_key = _viewer_key(remote_addr, user_agent)
     with _viewer_lock:
         stats = _load_viewer_stats(settings.viewer_stats_path)
+        stats = _ensure_unique_visitors_floor(
+            stats,
+            settings.viewer_stats_initial_unique,
+        )
         stats["total_views"] = increment_total_views(
             settings.view_counter_path,
             fallback=max(
@@ -371,6 +380,16 @@ def _load_viewer_stats(path: Path) -> dict[str, Any]:
         merged["known_visitors"] = []
     merged["unique_visitors"] = len(merged["known_visitors"])
     return merged
+
+
+def _ensure_unique_visitors_floor(stats: dict[str, Any], floor: int = 0) -> dict[str, Any]:
+    safe_floor = max(int(floor or 0), 0)
+    known_visitors = stats["known_visitors"]
+    missing = safe_floor - len(known_visitors)
+    if missing > 0:
+        known_visitors.extend(f"seeded-visitor-{index}" for index in range(missing))
+    stats["unique_visitors"] = len(known_visitors)
+    return stats
 
 
 def _save_viewer_stats(path: Path, stats: dict[str, Any]) -> None:

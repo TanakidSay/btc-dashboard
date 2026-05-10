@@ -40,6 +40,7 @@ class Settings:
     cache_ttl_seconds: int = 30
     etf_flow_ttl_seconds: int = 12 * 60 * 60
     view_counter_initial_total: int = 0
+    viewer_stats_initial_unique: int = 0
     node_block_count: int = 10
     max_csv_rows: int = 100
     max_table_rows: int = 20
@@ -118,6 +119,7 @@ class Settings:
             cache_ttl_seconds=int(os.getenv("CACHE_TTL_SECONDS", "30")),
             etf_flow_ttl_seconds=int(os.getenv("ETF_FLOW_TTL_SECONDS", str(12 * 60 * 60))),
             view_counter_initial_total=int(os.getenv("VIEW_COUNTER_INITIAL_TOTAL", "0")),
+            viewer_stats_initial_unique=int(os.getenv("VIEWER_STATS_INITIAL_UNIQUE", "0")),
             node_block_count=int(os.getenv("NODE_BLOCK_COUNT", "10")),
             fee_spike_threshold=float(os.getenv("FEE_SPIKE_THRESHOLD", "5")),
             whale_alert_threshold_btc=float(os.getenv("WHALE_ALERT_THRESHOLD_BTC", "100")),

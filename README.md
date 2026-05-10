@@ -165,6 +165,7 @@ Optional local storage variables:
 VIEWER_STATS_FILE=data/viewer_stats.json
 VIEW_COUNTER_FILE=data/view_counter.json
 VIEW_COUNTER_INITIAL_TOTAL=0
+VIEWER_STATS_INITIAL_UNIQUE=0
 ETF_FLOW_FILE=data/etf_flows.json
 BTC_PRICE_BASELINE_FILE=data/btc_price_baseline.json
 ETF_FLOW_TTL_SECONDS=43200
@@ -175,6 +176,7 @@ it automatically and handles missing or corrupted JSON safely. On Railway, point
 this path at a mounted persistent volume when you need the total to survive
 redeployments. `VIEW_COUNTER_INITIAL_TOTAL` seeds a missing counter file once,
 which is useful when moving an existing deployment to a persistent volume.
+`VIEWER_STATS_INITIAL_UNIQUE` does the same for the visible unique visitor count.
 
 `ETF_FLOW_FILE` is an optional manual ETF flow file. If it contains valid rows,
 the dashboard uses it before live ETF scraping so production hosts do not depend

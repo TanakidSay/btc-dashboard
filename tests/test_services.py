@@ -185,6 +185,7 @@ def _settings(tmp_path, **overrides) -> Settings:
         "btc_price_baseline_path": tmp_path / "btc_price_baseline.json",
         "etf_flow_ttl_seconds": 12 * 60 * 60,
         "view_counter_initial_total": 0,
+        "viewer_stats_initial_unique": 0,
         "start_worker": False,
         "bitcoin_rpc_password": "test",
         "cache_ttl_seconds": 30,
@@ -257,6 +258,40 @@ def test_view_counter_initial_total_does_not_lower_existing_counter(tmp_path) ->
 
     assert get_viewer_stats(settings)["total_views"] == 200
     assert record_view(settings, "127.0.0.1", "BrowserA")["total_views"] == 201
+
+
+def test_viewer_stats_initial_unique_raises_lower_existing_unique_count(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    for index in range(7):
+        record_view(settings, f"127.0.0.{index}", "BrowserA")
+
+    seeded_settings = _settings(
+        tmp_path,
+        viewer_stats_initial_unique=105,
+        viewer_stats_path=settings.viewer_stats_path,
+        view_counter_path=settings.view_counter_path,
+    )
+    stats = get_viewer_stats(seeded_settings)
+
+    assert stats["unique_visitors"] == 105
+    assert record_view(seeded_settings, "127.0.0.200", "BrowserA")["unique_visitors"] == 106
+
+
+def test_viewer_stats_initial_unique_does_not_lower_existing_unique_count(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    for index in range(3):
+        record_view(settings, f"127.0.0.{index}", "BrowserA")
+
+    seeded_settings = _settings(
+        tmp_path,
+        viewer_stats_initial_unique=2,
+        viewer_stats_path=settings.viewer_stats_path,
+        view_counter_path=settings.view_counter_path,
+    )
+
+    assert get_viewer_stats(seeded_settings)["unique_visitors"] == 3
 
 
 def test_total_view_counter_persists_after_restart_simulation(tmp_path) -> None:
