@@ -59,3 +59,9 @@ def test_frontend_institutional_insight_uses_etf_trend() -> None:
     assert 'if (etfTrend === "inflow" && priceRising)' in dashboard_js
     assert 'if (etfTrend === "outflow" && priceFalling)' in dashboard_js
     assert "ETF outflow is visible" in dashboard_js
+
+
+def test_frontend_renders_treasury_holder_confidence_label() -> None:
+    dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+
+    assert "holder.confidence ?? holder.source_label" in dashboard_js
