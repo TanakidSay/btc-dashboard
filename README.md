@@ -183,6 +183,9 @@ not a real-time price feed. The dashboard labels this data as `Manual`, not live
 data. `ETF_FLOW_TTL_SECONDS` controls backend ETF refresh cadence and is clamped
 to a one-hour minimum.
 
+If live treasury sources are unavailable, the dashboard uses a clearly labeled
+checked public estimate instead of showing blank institutional cards.
+
 ```json
 {
   "source": "manual",

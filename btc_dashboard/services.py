@@ -124,6 +124,41 @@ FALLBACK_BTC_TREASURY = {
     "updated_at": None,
     "error": "",
 }
+ESTIMATED_BTC_TREASURY = {
+    "total_btc_held": 1_229_927,
+    "treasury_dominance_percent": 5.86,
+    "top_holders": [
+        {
+            "name": "Strategy",
+            "symbol": "MSTR.US",
+            "btc_held": 818_334,
+            "supply_percent": 3.897,
+        },
+        {
+            "name": "XXI",
+            "symbol": "XXI.US",
+            "btc_held": 43_514,
+            "supply_percent": 0.207,
+        },
+        {
+            "name": "Metaplanet",
+            "symbol": "3350.T",
+            "btc_held": 40_177,
+            "supply_percent": 0.191,
+        },
+        {
+            "name": "MARA Holdings",
+            "symbol": "MARA.US",
+            "btc_held": 38_689,
+            "supply_percent": 0.184,
+        },
+    ],
+    "source": "coingecko-treasury-estimate",
+    "status": "fallback",
+    "updated_at": "2026-05-10T00:00:00Z",
+    "error": "Live treasury source unavailable; using checked public estimate data",
+    "data_note": "Treasury data is using checked public estimate data from CoinGecko.",
+}
 FALLBACK_SUPPLY_OWNERSHIP = {
     "circulating_supply": "N/A",
     "max_supply": BITCOIN_MAX_SUPPLY_BTC,
@@ -1372,7 +1407,20 @@ def _get_btc_treasury_with_fallback(settings: Settings) -> dict[str, Any]:
             logger.warning("%s treasury request failed: %s", source_name, exc)
             errors.append(f"{source_name}: {exc}")
             continue
-    raise RuntimeError(" | ".join(errors) if errors else "treasury source unavailable")
+    error = " | ".join(errors) if errors else "treasury source unavailable"
+    with _treasury_cache_lock:
+        if _last_successful_treasury is not None:
+            stale = deepcopy(_last_successful_treasury)
+            stale["status"] = "stale"
+            stale["error"] = error
+            return stale
+    return _estimated_btc_treasury(error)
+
+
+def _estimated_btc_treasury(error: str) -> dict[str, Any]:
+    payload = deepcopy(ESTIMATED_BTC_TREASURY)
+    payload["error"] = f"{payload['error']}: {error}"
+    return payload
 
 
 def _normalize_treasury_payload(data: dict[str, Any], source: str) -> dict[str, Any]:

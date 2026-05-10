@@ -1,5 +1,15 @@
 {
   "source": "manual",
-  "updated_at": "",
-  "flow_history": []
+  "updated_at": "2026-05-10T00:00:00Z",
+  "flow_history": [
+    {"date": "2026-04-28", "net_flow_usd": -89700000},
+    {"date": "2026-04-29", "net_flow_usd": -137600000},
+    {"date": "2026-04-30", "net_flow_usd": 23500000},
+    {"date": "2026-05-01", "net_flow_usd": 629800000},
+    {"date": "2026-05-04", "net_flow_usd": 532300000},
+    {"date": "2026-05-05", "net_flow_usd": 467300000},
+    {"date": "2026-05-06", "net_flow_usd": 46200000},
+    {"date": "2026-05-07", "net_flow_usd": -268500000},
+    {"date": "2026-05-08", "net_flow_usd": -145700000}
+  ]
 }

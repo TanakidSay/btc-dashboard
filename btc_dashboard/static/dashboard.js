@@ -506,12 +506,19 @@ function institutionalInsight(etfData, treasuryData, priceData) {
     const priceRising = Number.isFinite(latestPrice) && Number.isFinite(previousPrice) && latestPrice > previousPrice;
     const priceFalling = Number.isFinite(latestPrice) && Number.isFinite(previousPrice) && latestPrice < previousPrice;
     const dominance = Number(treasuryData?.treasury_dominance_percent);
+    const etfTrend = etfData?.trend ?? etfData?.status;
 
-    if (etfData?.status === "inflow" && priceRising) {
+    if (etfTrend === "inflow" && priceRising) {
         return "ETF inflow with rising BTC price: institutional demand is positive.";
     }
-    if (etfData?.status === "outflow" && priceFalling) {
+    if (etfTrend === "outflow" && priceFalling) {
         return "ETF outflow with falling BTC price: institutional posture is risk-off.";
+    }
+    if (etfTrend === "inflow") {
+        return "ETF inflow is visible; watch whether BTC price confirms the demand signal.";
+    }
+    if (etfTrend === "outflow") {
+        return "ETF outflow is visible; institutional demand is cooling until flows stabilize.";
     }
     if (Number.isFinite(dominance) && dominance > 0) {
         return "Treasury dominance is visible: long-term accumulation remains an institutional signal.";

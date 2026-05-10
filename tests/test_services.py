@@ -785,18 +785,15 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
 
     payload = get_btc_treasury_holdings(_settings(tmp_path, cache_ttl_seconds=0))
 
-    assert payload == {
-        "total_btc_held": "N/A",
-        "treasury_dominance_percent": "N/A",
-        "top_holders": [],
-        "source": "fallback",
-        "status": "error",
-        "updated_at": None,
-        "error": (
-            "coingecko-public-treasury: HTTP 503 | "
-            "coingecko-company-treasury: HTTP 503"
-        ),
-    }
+    assert payload["total_btc_held"] == 1_229_927
+    assert payload["treasury_dominance_percent"] == 5.86
+    assert payload["top_holders"][0]["name"] == "Strategy"
+    assert payload["source"] == "coingecko-treasury-estimate"
+    assert payload["status"] == "fallback"
+    assert payload["updated_at"]
+    assert "coingecko-public-treasury: HTTP 503" in payload["error"]
+    assert "coingecko-company-treasury: HTTP 503" in payload["error"]
+    assert "checked public estimate" in payload["data_note"]
 
 
 def test_ownership_endpoint_payload_calculates_scarcity_metrics(monkeypatch, tmp_path) -> None:

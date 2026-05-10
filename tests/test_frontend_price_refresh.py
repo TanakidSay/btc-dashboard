@@ -50,3 +50,12 @@ def test_frontend_renders_etf_source_label_and_note() -> None:
     assert "etfData.source_label" in dashboard_js
     assert "etfData.data_note" in dashboard_js
     assert "etfData.is_fallback || etfData.is_stale" in dashboard_js
+
+
+def test_frontend_institutional_insight_uses_etf_trend() -> None:
+    dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+
+    assert "const etfTrend = etfData?.trend ?? etfData?.status;" in dashboard_js
+    assert 'if (etfTrend === "inflow" && priceRising)' in dashboard_js
+    assert 'if (etfTrend === "outflow" && priceFalling)' in dashboard_js
+    assert "ETF outflow is visible" in dashboard_js
