@@ -823,6 +823,8 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
     assert payload["total_btc_held"] == 1_229_927
     assert payload["treasury_dominance_percent"] == 5.86
     assert payload["top_holders"][0]["name"] == "Strategy"
+    assert len(payload["top_holders"]) == 10
+    assert payload["top_holders"][-1]["name"] == "CleanSpark"
     assert payload["source"] == "coingecko-treasury-estimate"
     assert payload["status"] == "fallback"
     assert payload["updated_at"]
