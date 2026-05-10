@@ -61,7 +61,8 @@ def test_frontend_institutional_insight_uses_etf_trend() -> None:
     assert "ETF outflow is visible" in dashboard_js
 
 
-def test_frontend_renders_treasury_holder_confidence_label() -> None:
+def test_frontend_renders_treasury_holders_without_confidence_label() -> None:
     dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
 
-    assert "holder.confidence ?? holder.source_label" in dashboard_js
+    assert "holder.confidence" not in dashboard_js
+    assert "holder.source_label" not in dashboard_js

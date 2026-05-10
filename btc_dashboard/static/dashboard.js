@@ -547,10 +547,7 @@ function renderInstitutionalCards(etfData, treasuryData, priceData) {
     document.getElementById("treasuryTopHolders").innerHTML = holders.length
         ? holders.map((holder) => `
             <div class="flex justify-between gap-3">
-                <span class="min-w-0">
-                    <span class="block truncate">${escapeHtml(holder.name ?? "Unknown")}</span>
-                    <span class="block truncate text-[10px] text-gray-600">${escapeHtml(holder.confidence ?? holder.source_label ?? "")}</span>
-                </span>
+                <span class="truncate">${escapeHtml(holder.name ?? "Unknown")}</span>
                 <span class="shrink-0 text-gray-300">${formatBtc(holder.btc_held)}</span>
             </div>`).join("")
         : `<p class="text-gray-500">Top holders unavailable.</p>`;

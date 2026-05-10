@@ -828,16 +828,19 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
         "Strategy",
         "Metaplanet",
         "MARA Holdings",
-        "Riot Platforms",
         "Galaxy Digital",
-        "CleanSpark",
+        "Riot Platforms",
         "Coinbase",
+        "Hut 8",
+        "CleanSpark",
         "Tesla",
         "Block",
-        "Hut 8",
     ]
-    assert all(holder["confidence"] == "checked estimate" for holder in payload["top_holders"])
-    assert all("source_label" in holder for holder in payload["top_holders"])
+    assert [holder["btc_held"] for holder in payload["top_holders"]] == sorted(
+        [holder["btc_held"] for holder in payload["top_holders"]],
+        reverse=True,
+    )
+    assert all("confidence" not in holder for holder in payload["top_holders"])
     assert payload["source"] == "coingecko-treasury-estimate"
     assert payload["status"] == "fallback"
     assert payload["updated_at"]
