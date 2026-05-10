@@ -826,15 +826,15 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
     assert len(payload["top_holders"]) == 10
     assert [holder["name"] for holder in payload["top_holders"]] == [
         "Strategy",
+        "XXI",
         "Metaplanet",
         "MARA Holdings",
+        "Bitcoin Standard Treasury Company",
         "Galaxy Digital",
+        "Bullish",
         "Riot Platforms",
         "Coinbase",
-        "Hut 8",
-        "CleanSpark",
-        "Tesla",
-        "Block",
+        "Strive",
     ]
     assert [holder["btc_held"] for holder in payload["top_holders"]] == sorted(
         [holder["btc_held"] for holder in payload["top_holders"]],

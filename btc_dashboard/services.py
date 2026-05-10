@@ -135,6 +135,12 @@ ESTIMATED_BTC_TREASURY = {
             "supply_percent": 3.897,
         },
         {
+            "name": "XXI",
+            "symbol": "XXI.US",
+            "btc_held": 43_514,
+            "supply_percent": 0.207,
+        },
+        {
             "name": "Metaplanet",
             "symbol": "3350.T",
             "btc_held": 40_177,
@@ -147,10 +153,22 @@ ESTIMATED_BTC_TREASURY = {
             "supply_percent": 0.184,
         },
         {
+            "name": "Bitcoin Standard Treasury Company",
+            "symbol": "CEPO.US",
+            "btc_held": 30_021,
+            "supply_percent": 0.143,
+        },
+        {
             "name": "Galaxy Digital",
             "symbol": "GLXY.US",
             "btc_held": 25_723,
             "supply_percent": 0.122,
+        },
+        {
+            "name": "Bullish",
+            "symbol": "BLSH.US",
+            "btc_held": 23_300,
+            "supply_percent": 0.111,
         },
         {
             "name": "Riot Platforms",
@@ -165,28 +183,10 @@ ESTIMATED_BTC_TREASURY = {
             "supply_percent": 0.073,
         },
         {
-            "name": "Hut 8",
-            "symbol": "HUT.US",
-            "btc_held": 13_696,
-            "supply_percent": 0.065,
-        },
-        {
-            "name": "CleanSpark",
-            "symbol": "CLSK.US",
-            "btc_held": 13_363,
-            "supply_percent": 0.064,
-        },
-        {
-            "name": "Tesla",
-            "symbol": "TSLA.US",
-            "btc_held": 11_509,
-            "supply_percent": 0.055,
-        },
-        {
-            "name": "Block",
-            "symbol": "XYZ.US",
-            "btc_held": 8_997,
-            "supply_percent": 0.043,
+            "name": "Strive",
+            "symbol": "ASST.US",
+            "btc_held": 14_556,
+            "supply_percent": 0.069,
         },
     ],
     "source": "coingecko-treasury-estimate",
