@@ -243,13 +243,13 @@ def test_view_counter_initial_total_seeds_missing_counter_file(tmp_path) -> None
     assert load_total_views(settings.view_counter_path) == 175
 
 
-def test_view_counter_initial_total_raises_lower_existing_counter(tmp_path) -> None:
+def test_view_counter_initial_total_does_not_raise_existing_counter(tmp_path) -> None:
     settings = _settings(tmp_path, view_counter_initial_total=182)
     save_total_views(settings.view_counter_path, 174)
 
-    assert get_viewer_stats(settings)["total_views"] == 182
-    assert record_view(settings, "127.0.0.1", "BrowserA")["total_views"] == 183
-    assert load_total_views(settings.view_counter_path) == 183
+    assert get_viewer_stats(settings)["total_views"] == 174
+    assert record_view(settings, "127.0.0.1", "BrowserA")["total_views"] == 175
+    assert load_total_views(settings.view_counter_path) == 175
 
 
 def test_view_counter_initial_total_does_not_lower_existing_counter(tmp_path) -> None:

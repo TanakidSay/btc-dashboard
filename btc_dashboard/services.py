@@ -319,11 +319,6 @@ def get_viewer_stats(settings: Settings) -> dict[str, Any]:
                 settings.view_counter_initial_total,
             ),
         )
-        stats["total_views"] = ensure_total_views_floor(
-            settings.view_counter_path,
-            stats["total_views"],
-            settings.view_counter_initial_total,
-        )
         _save_viewer_stats(settings.viewer_stats_path, stats)
     return _public_viewer_stats(stats)
 
@@ -346,7 +341,6 @@ def record_view(
                 int(stats.get("total_views") or 0),
                 settings.view_counter_initial_total,
             ),
-            floor=settings.view_counter_initial_total,
         )
         if visitor_key not in stats["known_visitors"]:
             stats["known_visitors"].append(visitor_key)
