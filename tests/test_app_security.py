@@ -13,6 +13,7 @@ def _settings(tmp_path, **overrides) -> Settings:
         "secret_key": "test-secret",
         "fee_csv_path": tmp_path / "fees.csv",
         "viewer_stats_path": tmp_path / "viewer_stats.json",
+        "viewer_analytics_path": tmp_path / "viewer_analytics.json",
         "view_counter_path": tmp_path / "view_counter.json",
         "x_signal_state_path": tmp_path / "x_signal_state.json",
         "x_posted_events_path": tmp_path / "posted_events.json",
@@ -109,6 +110,30 @@ def test_index_records_viewer_stats(monkeypatch, tmp_path) -> None:
     viewer_response = app.test_client().get("/api/viewers")
     assert viewer_response.status_code == 200
     assert viewer_response.get_json()["total_views"] == 1
+
+
+def test_viewer_analytics_endpoint_reports_aggregate_sources(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path))
+    client = app.test_client()
+
+    response = client.get(
+        "/",
+        headers={
+            "User-Agent": "Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Safari/604.1",
+            "Referer": "https://x.com/BitcoinWindow",
+            "CF-IPCountry": "TH",
+        },
+    )
+    analytics_response = client.get("/api/viewer-analytics")
+
+    assert response.status_code == 200
+    assert analytics_response.status_code == 200
+    body = analytics_response.get_json()
+    assert body["sources"]["x"] == 1
+    assert body["devices"]["mobile"] == 1
+    assert body["countries"]["TH"] == 1
+    assert "privacy" in body
 
 
 def test_treasury_route_returns_stable_json_when_service_fails(monkeypatch, tmp_path) -> None:
@@ -380,6 +405,7 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "renderEtfFlowNote" in js
     assert "ETF flow history is using fallback estimate data. Live data unavailable." in js
     assert "etfChartRows" in js
+    assert "Latest:" in js
     assert 'startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000)' in js
     assert 'startRefreshJob("btc-price-chart", refreshPriceChart, 60000)' in js
     assert 'startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000)' in js

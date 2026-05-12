@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import types
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from btc_dashboard.config import Settings
 from btc_dashboard.x_poster import get_x_status, post_to_x
@@ -102,13 +102,13 @@ def test_x_poster_mega_whale_bypasses_cooldown(monkeypatch, tmp_path) -> None:
 def test_x_poster_daily_limit_enforced(monkeypatch, tmp_path) -> None:
     _install_fake_tweepy(monkeypatch)
     settings = _posting_settings(tmp_path)
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = datetime.now().astimezone().replace(microsecond=0)
     events = [
         {
             "event_id": "event-0",
             "signal_type": "fee_spike",
             "text_hash": "hash-0",
-            "posted_at": (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+            "posted_at": (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
             "bypass_cooldown": False,
         }
     ]

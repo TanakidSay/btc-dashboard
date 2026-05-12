@@ -528,7 +528,9 @@ function institutionalInsight(etfData, treasuryData, priceData) {
 
 function renderInstitutionalCards(etfData, treasuryData, priceData) {
     document.getElementById("etfNetFlow").innerText = formatCompactUsd(etfData.latest_net_flow_usd);
-    document.getElementById("etfFlowSource").innerText = `${formatMinutesAgo(etfData.updated_at)} | Source: ${etfData.source_label ?? etfData.source ?? "fallback"}`;
+    const etfSource = etfData.source_label ?? etfData.source ?? "fallback";
+    const latestDate = etfData.latest_date ? ` | Latest: ${etfData.latest_date}` : "";
+    document.getElementById("etfFlowSource").innerText = `${formatMinutesAgo(etfData.updated_at)} | Source: ${etfSource}${latestDate}`;
 
     const status = etfData.trend ?? etfData.status ?? "neutral";
     const statusEl = document.getElementById("etfFlowStatus");

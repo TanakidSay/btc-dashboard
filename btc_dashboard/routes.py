@@ -16,6 +16,7 @@ from .services import (
     get_etf_flow,
     get_recent_whale_transactions,
     get_security_overview,
+    get_viewer_analytics,
     get_viewer_stats,
     record_view,
     snapshot,
@@ -45,6 +46,9 @@ def index():
         _settings(),
         request.headers.get("X-Forwarded-For", request.remote_addr),
         request.headers.get("User-Agent"),
+        request.headers.get("Referer"),
+        request.path,
+        request.headers.get("CF-IPCountry") or request.headers.get("X-Country-Code"),
     )
     data = snapshot()
     return render_template("dashboard.html", table=data["table_html"])
@@ -291,6 +295,27 @@ def api_viewers():
             "total_views": 0,
             "unique_visitors": 0,
             "last_viewed_at": None,
+        })
+
+
+@api.route("/api/viewer-analytics")
+def api_viewer_analytics():
+    try:
+        return jsonify(get_viewer_analytics(_settings()))
+    except Exception as exc:
+        current_app.logger.exception("/api/viewer-analytics failed: %s", exc)
+        return jsonify({
+            "total_events": 0,
+            "last_viewed_at": None,
+            "sources": {},
+            "referrers": {},
+            "devices": {},
+            "browsers": {},
+            "countries": {},
+            "paths": {},
+            "recent": [],
+            "privacy": "Aggregate only; IP addresses are not stored.",
+            "error": str(exc),
         })
 
 

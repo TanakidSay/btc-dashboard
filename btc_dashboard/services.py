@@ -13,6 +13,7 @@ from html import unescape
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -61,6 +62,7 @@ COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/
 SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
 FARSIDE_BTC_ETF_LATEST_URL = "https://farside.co.uk/btc/"
+BITBO_BTC_ETF_FLOW_URL = "https://bitbo.io/treasuries/etf-flows/"
 WALLETPILOT_BTC_ETF_URL = "https://www.walletpilot.com/bitcoin-tracker/etfs"
 GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flows"
 COINGECKO_TREASURY_URLS = (
@@ -114,6 +116,12 @@ SEEDED_ETF_FLOW_MILLIONS = [
     ("29 Apr 2026", -41.5),
     ("30 Apr 2026", 204.8),
     ("01 May 2026", 118.9),
+    ("04 May 2026", 532.3),
+    ("05 May 2026", 467.3),
+    ("06 May 2026", 46.2),
+    ("07 May 2026", -268.5),
+    ("08 May 2026", -145.7),
+    ("11 May 2026", 27.2),
 ]
 FALLBACK_BTC_TREASURY = {
     "total_btc_held": "N/A",
@@ -220,6 +228,17 @@ DEFAULT_VIEWER_STATS = {
     "last_viewed_at": None,
     "known_visitors": [],
 }
+DEFAULT_VIEWER_ANALYTICS = {
+    "total_events": 0,
+    "last_viewed_at": None,
+    "sources": {},
+    "referrers": {},
+    "devices": {},
+    "browsers": {},
+    "countries": {},
+    "paths": {},
+    "recent": [],
+}
 
 
 class DataSourceError(RuntimeError):
@@ -323,10 +342,19 @@ def get_viewer_stats(settings: Settings) -> dict[str, Any]:
     return _public_viewer_stats(stats)
 
 
+def get_viewer_analytics(settings: Settings) -> dict[str, Any]:
+    with _viewer_lock:
+        analytics = _load_viewer_analytics(settings.viewer_analytics_path)
+    return _public_viewer_analytics(analytics)
+
+
 def record_view(
     settings: Settings,
     remote_addr: str | None,
     user_agent: str | None,
+    referrer: str | None = None,
+    path: str | None = None,
+    country: str | None = None,
 ) -> dict[str, Any]:
     visitor_key = _viewer_key(remote_addr, user_agent)
     with _viewer_lock:
@@ -347,6 +375,16 @@ def record_view(
         stats["unique_visitors"] = len(stats["known_visitors"])
         stats["last_viewed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         _save_viewer_stats(settings.viewer_stats_path, stats)
+        analytics = _load_viewer_analytics(settings.viewer_analytics_path)
+        _record_viewer_analytics(
+            analytics,
+            user_agent=user_agent,
+            referrer=referrer,
+            path=path,
+            country=country,
+            viewed_at=stats["last_viewed_at"],
+        )
+        _save_viewer_analytics(settings.viewer_analytics_path, analytics)
     return _public_viewer_stats(stats)
 
 
@@ -427,6 +465,140 @@ def _save_viewer_stats(path: Path, stats: dict[str, Any]) -> None:
     path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
 
 
+def _load_viewer_analytics(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return _default_viewer_analytics()
+    try:
+        analytics = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _default_viewer_analytics()
+    merged = _default_viewer_analytics()
+    merged.update(analytics)
+    for key in ("sources", "referrers", "devices", "browsers", "countries", "paths"):
+        if not isinstance(merged.get(key), dict):
+            merged[key] = {}
+    if not isinstance(merged.get("recent"), list):
+        merged["recent"] = []
+    merged["total_events"] = max(int(merged.get("total_events") or 0), 0)
+    return merged
+
+
+def _save_viewer_analytics(path: Path, analytics: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(analytics, indent=2), encoding="utf-8")
+
+
+def _record_viewer_analytics(
+    analytics: dict[str, Any],
+    user_agent: str | None,
+    referrer: str | None,
+    path: str | None,
+    country: str | None,
+    viewed_at: str | None,
+) -> None:
+    source = _viewer_source(referrer)
+    referrer_host = _viewer_referrer_host(referrer)
+    device = _viewer_device(user_agent)
+    browser = _viewer_browser(user_agent)
+    country_code = _viewer_country(country)
+    safe_path = _viewer_path(path)
+
+    analytics["total_events"] = max(int(analytics.get("total_events") or 0), 0) + 1
+    analytics["last_viewed_at"] = viewed_at
+    _increment_bucket(analytics["sources"], source)
+    _increment_bucket(analytics["referrers"], referrer_host)
+    _increment_bucket(analytics["devices"], device)
+    _increment_bucket(analytics["browsers"], browser)
+    _increment_bucket(analytics["countries"], country_code)
+    _increment_bucket(analytics["paths"], safe_path)
+    analytics["recent"] = (analytics.get("recent") or [])[-49:] + [
+        {
+            "viewed_at": viewed_at,
+            "source": source,
+            "referrer": referrer_host,
+            "device": device,
+            "browser": browser,
+            "country": country_code,
+            "path": safe_path,
+        }
+    ]
+
+
+def _increment_bucket(bucket: dict[str, int], key: str) -> None:
+    bucket[key] = int(bucket.get(key, 0) or 0) + 1
+
+
+def _viewer_source(referrer: str | None) -> str:
+    host = _viewer_referrer_host(referrer)
+    if host == "direct":
+        return "direct"
+    if "x.com" in host or "twitter.com" in host or "t.co" in host:
+        return "x"
+    if "google." in host:
+        return "google"
+    if "facebook." in host:
+        return "facebook"
+    if "reddit." in host:
+        return "reddit"
+    return "other"
+
+
+def _viewer_referrer_host(referrer: str | None) -> str:
+    if not referrer:
+        return "direct"
+    parsed = urlparse(referrer)
+    host = (parsed.netloc or parsed.path or "").lower()
+    if not host:
+        return "direct"
+    if host.startswith("www."):
+        host = host[4:]
+    return host.split("@")[-1].split(":")[0][:80] or "direct"
+
+
+def _viewer_device(user_agent: str | None) -> str:
+    agent = (user_agent or "").lower()
+    if not agent:
+        return "unknown"
+    if "bot" in agent or "crawler" in agent or "spider" in agent:
+        return "bot"
+    if "mobile" in agent or "iphone" in agent or "android" in agent:
+        return "mobile"
+    if "ipad" in agent or "tablet" in agent:
+        return "tablet"
+    return "desktop"
+
+
+def _viewer_browser(user_agent: str | None) -> str:
+    agent = (user_agent or "").lower()
+    if not agent:
+        return "unknown"
+    if "edg/" in agent:
+        return "edge"
+    if "chrome/" in agent and "chromium" not in agent:
+        return "chrome"
+    if "safari/" in agent and "chrome/" not in agent:
+        return "safari"
+    if "firefox/" in agent:
+        return "firefox"
+    if "bot" in agent or "crawler" in agent or "spider" in agent:
+        return "bot"
+    return "other"
+
+
+def _viewer_country(country: str | None) -> str:
+    value = (country or "").strip().upper()
+    if len(value) == 2 and value.isalpha():
+        return value
+    return "unknown"
+
+
+def _viewer_path(path: str | None) -> str:
+    value = (path or "/").strip() or "/"
+    if not value.startswith("/"):
+        value = f"/{value}"
+    return value[:120]
+
+
 def _public_viewer_stats(stats: dict[str, Any]) -> dict[str, Any]:
     return {
         "total_views": stats["total_views"],
@@ -442,6 +614,25 @@ def _default_viewer_stats() -> dict[str, Any]:
         "last_viewed_at": None,
         "known_visitors": [],
     }
+
+
+def _public_viewer_analytics(analytics: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "total_events": analytics["total_events"],
+        "last_viewed_at": analytics["last_viewed_at"],
+        "sources": analytics["sources"],
+        "referrers": analytics["referrers"],
+        "devices": analytics["devices"],
+        "browsers": analytics["browsers"],
+        "countries": analytics["countries"],
+        "paths": analytics["paths"],
+        "recent": analytics["recent"][-25:],
+        "privacy": "Aggregate only; IP addresses are not stored.",
+    }
+
+
+def _default_viewer_analytics() -> dict[str, Any]:
+    return deepcopy(DEFAULT_VIEWER_ANALYTICS)
 
 
 def format_fee_value(value: float) -> str:
@@ -971,6 +1162,9 @@ def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
         farside_data = loader(settings)
         if farside_data["source"] != "fallback":
             return farside_data
+    bitbo_data = _get_etf_flow_from_bitbo(settings)
+    if bitbo_data["source"] != "fallback":
+        return bitbo_data
     if settings.coinglass_api_key:
         coinglass_data = _get_etf_flow_from_coinglass(settings)
         if coinglass_data["source"] != "fallback":
@@ -1074,6 +1268,20 @@ def _get_etf_flow_from_farside_latest(settings: Settings) -> dict[str, Any]:
         return fallback
 
 
+def _get_etf_flow_from_bitbo(settings: Settings) -> dict[str, Any]:
+    try:
+        html = _get_browser_text(BITBO_BTC_ETF_FLOW_URL, settings)
+        rows = _parse_bitbo_etf_rows(html)
+        if not rows:
+            raise ValueError("Bitbo ETF flow table has no parsable rows")
+        return _normalize_etf_payload(rows[-30:], "bitbo")
+    except Exception as exc:
+        logger.warning("Bitbo ETF flow request failed: %s", exc)
+        fallback = FALLBACK_ETF_FLOW.copy()
+        fallback["error"] = str(exc)
+        return fallback
+
+
 def _get_etf_flow_from_manual_file(settings: Settings) -> dict[str, Any]:
     path = settings.etf_flow_path
     if not path.exists():
@@ -1165,7 +1373,13 @@ def _get_seeded_etf_flow() -> dict[str, Any]:
         }
         for date, flow_millions in SEEDED_ETF_FLOW_MILLIONS
     ]
-    fallback_history = history[-5:]
+    today = _utc_now_dt().date()
+    fallback_history = [
+        row
+        for row in history
+        if (parsed_date := _parse_etf_date(str(row.get("date") or ""))) is not None
+        and parsed_date <= today
+    ][-5:]
     if not fallback_history:
         raise ValueError("No seeded ETF flow history available")
     payload = _normalize_etf_payload(
@@ -1233,6 +1447,7 @@ def _etf_source_label(source: str, is_fallback: bool) -> str:
     if is_fallback:
         return "Fallback estimate"
     return {
+        "bitbo": "Bitbo",
         "coinglass": "CoinGlass",
         "manual": "Manual",
         "seeded-fallback": "Fallback estimate",
@@ -1243,6 +1458,7 @@ def _etf_data_note(source: str, is_fallback: bool) -> str:
     if is_fallback:
         return "ETF flow history is using fallback estimate data. Live data unavailable."
     return {
+        "bitbo": "ETF flow data loaded from Bitbo public table.",
         "coinglass": "ETF flow data loaded from CoinGlass.",
         "manual": "ETF flow data loaded from local manual file.",
     }.get(source, "ETF flow history is using live source data.")
@@ -1356,6 +1572,30 @@ def _extract_walletpilot_date(text: str) -> str:
 def _extract_globalcoinguide_date(text: str) -> str:
     match = re.search(r"Last updated:\s*([A-Za-z]{3}\s+[0-9]{1,2}(?:,\s*[0-9]{4})?)", text)
     return match.group(1) if match else ""
+
+
+def _parse_bitbo_etf_rows(html: str) -> list[dict[str, Any]]:
+    text = _clean_page_text(html)
+    pattern = re.compile(
+        r"((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+"
+        r"\d{1,2},\s+\d{4})\s+(.*?)(?=(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|"
+        r"Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}|$)",
+        flags=re.IGNORECASE,
+    )
+    rows = []
+    for match in pattern.finditer(text):
+        values = re.findall(r"-?\d+(?:\.\d+)?", match.group(2))
+        if not values:
+            continue
+        total_millions = _parse_farside_number(values[-1])
+        if total_millions is None:
+            continue
+        rows.append({
+            "date": match.group(1),
+            "net_flow_usd": total_millions * 1_000_000,
+            "close_price": None,
+        })
+    return rows
 
 
 def _extract_millions_flow(text: str, label: str) -> float | None:

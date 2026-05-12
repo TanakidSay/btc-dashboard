@@ -25,6 +25,7 @@ class Settings:
     secret_key: str
     fee_csv_path: Path
     viewer_stats_path: Path = BASE_DIR / "data/viewer_stats.json"
+    viewer_analytics_path: Path = BASE_DIR / "data/viewer_analytics.json"
     view_counter_path: Path = BASE_DIR / "data/view_counter.json"
     etf_flow_path: Path = BASE_DIR / "data/etf_flows.json"
     btc_price_baseline_path: Path = BASE_DIR / "data/btc_price_baseline.json"
@@ -82,6 +83,11 @@ class Settings:
         viewer_stats_path = Path(os.getenv("VIEWER_STATS_FILE", "data/viewer_stats.json"))
         if not viewer_stats_path.is_absolute():
             viewer_stats_path = BASE_DIR / viewer_stats_path
+        viewer_analytics_path = Path(
+            os.getenv("VIEWER_ANALYTICS_FILE", "data/viewer_analytics.json"),
+        )
+        if not viewer_analytics_path.is_absolute():
+            viewer_analytics_path = BASE_DIR / viewer_analytics_path
         view_counter_path = Path(os.getenv("VIEW_COUNTER_FILE", "data/view_counter.json"))
         if not view_counter_path.is_absolute():
             view_counter_path = BASE_DIR / view_counter_path
@@ -104,6 +110,7 @@ class Settings:
             secret_key=os.getenv("SECRET_KEY", "dev-only-change-me"),
             fee_csv_path=csv_path,
             viewer_stats_path=viewer_stats_path,
+            viewer_analytics_path=viewer_analytics_path,
             view_counter_path=view_counter_path,
             etf_flow_path=etf_flow_path,
             btc_price_baseline_path=btc_price_baseline_path,

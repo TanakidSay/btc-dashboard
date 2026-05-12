@@ -18,6 +18,7 @@ from btc_dashboard.services import (
     _extract_millions_flow,
     _extract_walletpilot_date,
     _normalize_etf_payload,
+    _parse_bitbo_etf_rows,
     _parse_farside_etf_rows_from_text,
     _parse_farside_latest_rows,
     build_alerts,
@@ -37,6 +38,7 @@ from btc_dashboard.services import (
     get_node_count_result,
     get_recent_whale_transactions,
     get_security_overview,
+    get_viewer_analytics,
     get_viewer_stats,
     increment_total_views,
     load_total_views,
@@ -180,6 +182,7 @@ def _settings(tmp_path, **overrides) -> Settings:
         "secret_key": "test",
         "fee_csv_path": tmp_path / "fees.csv",
         "viewer_stats_path": tmp_path / "viewer_stats.json",
+        "viewer_analytics_path": tmp_path / "viewer_analytics.json",
         "view_counter_path": tmp_path / "view_counter.json",
         "etf_flow_path": tmp_path / "etf_flows.json",
         "btc_price_baseline_path": tmp_path / "btc_price_baseline.json",
@@ -222,6 +225,39 @@ def test_record_view_updates_total_and_unique_counts(tmp_path) -> None:
     assert third["total_views"] == 3
     assert third["unique_visitors"] == 2
     assert third["last_viewed_at"] is not None
+
+
+def test_record_view_updates_aggregate_viewer_analytics(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    record_view(
+        settings,
+        "203.0.113.9",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1",
+        "https://x.com/BitcoinWindow/status/123",
+        "/",
+        "th",
+    )
+    record_view(
+        settings,
+        "203.0.113.10",
+        "Googlebot/2.1",
+        None,
+        "/api/price",
+        None,
+    )
+
+    analytics = get_viewer_analytics(settings)
+
+    assert analytics["total_events"] == 2
+    assert analytics["sources"] == {"x": 1, "direct": 1}
+    assert analytics["referrers"]["x.com"] == 1
+    assert analytics["devices"] == {"mobile": 1, "bot": 1}
+    assert analytics["browsers"] == {"safari": 1, "bot": 1}
+    assert analytics["countries"] == {"TH": 1, "unknown": 1}
+    assert analytics["paths"] == {"/": 1, "/api/price": 1}
+    assert "IP addresses are not stored" in analytics["privacy"]
+    assert "203.0.113" not in json.dumps(analytics)
 
 
 def test_get_viewer_stats_returns_zeroes_when_file_is_missing(tmp_path) -> None:
@@ -1053,11 +1089,26 @@ def test_parse_farside_etf_rows_from_text_handles_pipe_rows() -> None:
 def test_parse_farside_latest_rows_uses_first_total_value_and_skips_pending_rows() -> None:
     rows = _parse_farside_latest_rows(
         "01 May 2026 284.4 213.4 27.3 88.5 0.0 629.8 "
+        "11 May 2026 (7.4) (3.6) 0.0 0.0 7.3 0.0 0.0 4.6 0.0 26.3 0.0 0.0 27.2 "
         "04 May 2026 - - - - - - 0.0 Total 65,502"
     )
 
     assert rows == [
         {"date": "01 May 2026", "net_flow_usd": 284_400_000.0, "close_price": 0},
+        {"date": "11 May 2026", "net_flow_usd": -7_400_000.0, "close_price": 0},
+    ]
+
+
+def test_parse_bitbo_etf_rows_uses_totals_column() -> None:
+    rows = _parse_bitbo_etf_rows(
+        "Date IBIT FBTC GBTC Totals "
+        "May 07, 2026 -99.0 -130.3 -17.5 -261.2 "
+        "May 06, 2026 122.0 -38.8 -18.8 26.6"
+    )
+
+    assert rows == [
+        {"date": "May 07, 2026", "net_flow_usd": -261_200_000.0, "close_price": None},
+        {"date": "May 06, 2026", "net_flow_usd": 26_600_000.0, "close_price": None},
     ]
 
 
@@ -1146,6 +1197,38 @@ def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path
     assert payload["latest_date"] == "May 03"
     assert payload["latest_net_flow_usd"] == 342_000_000.0
     assert payload["7d_flow"] == 2_100_000_000.0
+
+
+def test_get_etf_flow_uses_bitbo_public_table(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk" in url:
+            return FakeResponse(status_code=403)
+        if "bitbo.io/treasuries/etf-flows" in url:
+            return FakeResponse(
+                text=(
+                    "May 07, 2026 -99.0 -130.3 -17.5 0.0 -12.7 0.0 -0.0 "
+                    "0.0 -9.1 0.0 7.5 0.0 0.0 -261.2 "
+                    "May 06, 2026 122.0 -38.8 -18.8 0.0 0.0 -25.0 -5.7 "
+                    "0.0 0.0 -7.0 0.0 0.0 0.0 26.6"
+                )
+            )
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 8, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "bitbo"
+    assert payload["source_label"] == "Bitbo"
+    assert payload["is_fallback"] is False
+    assert payload["is_stale"] is False
+    assert payload["latest_date"] == "May 07, 2026"
+    assert payload["latest_net_flow_usd"] == -261_200_000.0
+    assert len(payload["flow_history"]) == 2
 
 
 def test_get_etf_flow_uses_manual_json_before_farside(
@@ -1338,9 +1421,9 @@ def test_get_etf_flow_uses_recent_seeded_fallback(monkeypatch, tmp_path) -> None
 
     assert payload["source"] == "seeded-fallback"
     assert payload["status"] == "stale"
-    assert payload["latest_date"] == "01 May 2026"
-    assert payload["latest_net_flow_usd"] == 118_900_000.0
-    assert payload["7d_flow"] == 543_000_000.0
+    assert payload["latest_date"] == "04 May 2026"
+    assert payload["latest_net_flow_usd"] == 532_300_000.0
+    assert payload["7d_flow"] == 987_700_000.0
     assert len(payload["flow_history"]) == 5
     assert payload["is_fallback"] is True
     assert payload["is_stale"] is False
@@ -1370,7 +1453,7 @@ def test_get_etf_flow_uses_stale_seeded_history_when_live_data_fails(
     assert payload["is_fallback"] is True
     assert payload["is_stale"] is True
     assert payload["source_label"] == "Fallback estimate"
-    assert payload["latest_date"] == "01 May 2026"
+    assert payload["latest_date"] == "11 May 2026"
 
 
 def test_live_etf_data_still_uses_freshness_filter(monkeypatch) -> None:
