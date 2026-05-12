@@ -227,9 +227,14 @@ DEFAULT_VIEWER_STATS = {
     "unique_visitors": 0,
     "last_viewed_at": None,
     "known_visitors": [],
+    "suppressed_views": 0,
+    "dedupe_window_seconds": 60,
+    "recent_view_fingerprints": {},
 }
 DEFAULT_VIEWER_ANALYTICS = {
     "total_events": 0,
+    "suppressed_events": 0,
+    "dedupe_window_seconds": 60,
     "last_viewed_at": None,
     "sources": {},
     "referrers": {},
@@ -238,6 +243,7 @@ DEFAULT_VIEWER_ANALYTICS = {
     "countries": {},
     "paths": {},
     "recent": [],
+    "recent_fingerprints": {},
 }
 
 
@@ -363,13 +369,21 @@ def record_view(
             stats,
             settings.viewer_stats_initial_unique,
         )
-        stats["total_views"] = increment_total_views(
+        current_total_views = load_total_views(
             settings.view_counter_path,
             fallback=max(
                 int(stats.get("total_views") or 0),
                 settings.view_counter_initial_total,
             ),
         )
+        stats["total_views"] = current_total_views
+        if _should_count_view(stats, visitor_key, path):
+            stats["total_views"] = increment_total_views(
+                settings.view_counter_path,
+                fallback=max(current_total_views, settings.view_counter_initial_total),
+            )
+        else:
+            stats["suppressed_views"] = max(int(stats.get("suppressed_views") or 0), 0) + 1
         if visitor_key not in stats["known_visitors"]:
             stats["known_visitors"].append(visitor_key)
         stats["unique_visitors"] = len(stats["known_visitors"])
@@ -378,6 +392,7 @@ def record_view(
         analytics = _load_viewer_analytics(settings.viewer_analytics_path)
         _record_viewer_analytics(
             analytics,
+            visitor_key=visitor_key,
             user_agent=user_agent,
             referrer=referrer,
             path=path,
@@ -446,7 +461,11 @@ def _load_viewer_stats(path: Path) -> dict[str, Any]:
     merged.update(stats)
     if not isinstance(merged["known_visitors"], list):
         merged["known_visitors"] = []
+    if not isinstance(merged.get("recent_view_fingerprints"), dict):
+        merged["recent_view_fingerprints"] = {}
     merged["unique_visitors"] = len(merged["known_visitors"])
+    merged["suppressed_views"] = max(int(merged.get("suppressed_views") or 0), 0)
+    merged["dedupe_window_seconds"] = max(int(merged.get("dedupe_window_seconds") or 60), 1)
     return merged
 
 
@@ -465,6 +484,17 @@ def _save_viewer_stats(path: Path, stats: dict[str, Any]) -> None:
     path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
 
 
+def _should_count_view(stats: dict[str, Any], visitor_key: str, path: str | None) -> bool:
+    dedupe_window_seconds = max(int(stats.get("dedupe_window_seconds") or 60), 1)
+    now = time.time()
+    fingerprints = stats["recent_view_fingerprints"]
+    _prune_fingerprints(fingerprints, now, dedupe_window_seconds)
+    fingerprint = _viewer_analytics_fingerprint(visitor_key, "view", _viewer_path(path))
+    last_seen = _safe_float(fingerprints.get(fingerprint))
+    fingerprints[fingerprint] = now
+    return last_seen is None or now - last_seen >= dedupe_window_seconds
+
+
 def _load_viewer_analytics(path: Path) -> dict[str, Any]:
     if not path.exists():
         return _default_viewer_analytics()
@@ -479,7 +509,11 @@ def _load_viewer_analytics(path: Path) -> dict[str, Any]:
             merged[key] = {}
     if not isinstance(merged.get("recent"), list):
         merged["recent"] = []
+    if not isinstance(merged.get("recent_fingerprints"), dict):
+        merged["recent_fingerprints"] = {}
     merged["total_events"] = max(int(merged.get("total_events") or 0), 0)
+    merged["suppressed_events"] = max(int(merged.get("suppressed_events") or 0), 0)
+    merged["dedupe_window_seconds"] = max(int(merged.get("dedupe_window_seconds") or 60), 1)
     return merged
 
 
@@ -490,6 +524,7 @@ def _save_viewer_analytics(path: Path, analytics: dict[str, Any]) -> None:
 
 def _record_viewer_analytics(
     analytics: dict[str, Any],
+    visitor_key: str,
     user_agent: str | None,
     referrer: str | None,
     path: str | None,
@@ -502,6 +537,18 @@ def _record_viewer_analytics(
     browser = _viewer_browser(user_agent)
     country_code = _viewer_country(country)
     safe_path = _viewer_path(path)
+    dedupe_window_seconds = max(int(analytics.get("dedupe_window_seconds") or 60), 1)
+    now = time.time()
+    _prune_viewer_fingerprints(analytics, now, dedupe_window_seconds)
+    fingerprint = _viewer_analytics_fingerprint(visitor_key, source, safe_path)
+    recent_fingerprints = analytics["recent_fingerprints"]
+    last_seen = _safe_float(recent_fingerprints.get(fingerprint))
+    if last_seen is not None and now - last_seen < dedupe_window_seconds:
+        analytics["suppressed_events"] = max(int(analytics.get("suppressed_events") or 0), 0) + 1
+        recent_fingerprints[fingerprint] = now
+        analytics["last_viewed_at"] = viewed_at
+        return
+    recent_fingerprints[fingerprint] = now
 
     analytics["total_events"] = max(int(analytics.get("total_events") or 0), 0) + 1
     analytics["last_viewed_at"] = viewed_at
@@ -522,6 +569,40 @@ def _record_viewer_analytics(
             "path": safe_path,
         }
     ]
+
+
+def _viewer_analytics_fingerprint(visitor_key: str, source: str, path: str) -> str:
+    raw = f"{visitor_key}|{source}|{path}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _prune_viewer_fingerprints(
+    analytics: dict[str, Any],
+    now: float,
+    dedupe_window_seconds: int,
+) -> None:
+    _prune_fingerprints(analytics["recent_fingerprints"], now, dedupe_window_seconds)
+
+
+def _prune_fingerprints(
+    recent_fingerprints: dict[str, Any],
+    now: float,
+    dedupe_window_seconds: int,
+) -> None:
+    stale_keys = [
+        key
+        for key, last_seen in recent_fingerprints.items()
+        if (_safe_float(last_seen) or 0) < now - dedupe_window_seconds
+    ]
+    for key in stale_keys:
+        recent_fingerprints.pop(key, None)
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _increment_bucket(bucket: dict[str, int], key: str) -> None:
@@ -604,21 +685,20 @@ def _public_viewer_stats(stats: dict[str, Any]) -> dict[str, Any]:
         "total_views": stats["total_views"],
         "unique_visitors": stats["unique_visitors"],
         "last_viewed_at": stats["last_viewed_at"],
+        "suppressed_views": stats.get("suppressed_views", 0),
+        "dedupe_window_seconds": stats.get("dedupe_window_seconds", 60),
     }
 
 
 def _default_viewer_stats() -> dict[str, Any]:
-    return {
-        "total_views": 0,
-        "unique_visitors": 0,
-        "last_viewed_at": None,
-        "known_visitors": [],
-    }
+    return deepcopy(DEFAULT_VIEWER_STATS)
 
 
 def _public_viewer_analytics(analytics: dict[str, Any]) -> dict[str, Any]:
     return {
         "total_events": analytics["total_events"],
+        "suppressed_events": analytics["suppressed_events"],
+        "dedupe_window_seconds": analytics["dedupe_window_seconds"],
         "last_viewed_at": analytics["last_viewed_at"],
         "sources": analytics["sources"],
         "referrers": analytics["referrers"],

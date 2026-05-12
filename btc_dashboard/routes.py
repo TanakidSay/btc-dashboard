@@ -295,6 +295,8 @@ def api_viewers():
             "total_views": 0,
             "unique_visitors": 0,
             "last_viewed_at": None,
+            "suppressed_views": 0,
+            "dedupe_window_seconds": 60,
         })
 
 
@@ -306,6 +308,8 @@ def api_viewer_analytics():
         current_app.logger.exception("/api/viewer-analytics failed: %s", exc)
         return jsonify({
             "total_events": 0,
+            "suppressed_events": 0,
+            "dedupe_window_seconds": 60,
             "last_viewed_at": None,
             "sources": {},
             "referrers": {},

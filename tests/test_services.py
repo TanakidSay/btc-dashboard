@@ -221,8 +221,9 @@ def test_record_view_updates_total_and_unique_counts(tmp_path) -> None:
     third = record_view(settings, "127.0.0.2", "BrowserB")
 
     assert first["total_views"] == 1
-    assert second["total_views"] == 2
-    assert third["total_views"] == 3
+    assert second["total_views"] == 1
+    assert second["suppressed_views"] == 1
+    assert third["total_views"] == 2
     assert third["unique_visitors"] == 2
     assert third["last_viewed_at"] is not None
 
@@ -260,6 +261,37 @@ def test_record_view_updates_aggregate_viewer_analytics(tmp_path) -> None:
     assert "203.0.113" not in json.dumps(analytics)
 
 
+def test_viewer_analytics_suppresses_duplicate_events_within_dedupe_window(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr("btc_dashboard.services.time.time", lambda: clock["now"])
+    settings = _settings(tmp_path)
+
+    first = record_view(settings, "203.0.113.9", "Chrome", None, "/", None)
+    second = record_view(settings, "203.0.113.9", "Chrome", None, "/", None)
+    analytics = get_viewer_analytics(settings)
+
+    assert first["total_views"] == 1
+    assert second["total_views"] == 1
+    assert second["suppressed_views"] == 1
+    assert analytics["total_events"] == 1
+    assert analytics["suppressed_events"] == 1
+    assert analytics["dedupe_window_seconds"] == 60
+    assert analytics["sources"] == {"direct": 1}
+
+    clock["now"] += 61
+    record_view(settings, "203.0.113.9", "Chrome", None, "/", None)
+
+    analytics = get_viewer_analytics(settings)
+    stats = get_viewer_stats(settings)
+    assert stats["total_views"] == 2
+    assert stats["suppressed_views"] == 1
+    assert analytics["total_events"] == 2
+    assert analytics["suppressed_events"] == 1
+
+
 def test_get_viewer_stats_returns_zeroes_when_file_is_missing(tmp_path) -> None:
     settings = _settings(tmp_path)
 
@@ -267,6 +299,8 @@ def test_get_viewer_stats_returns_zeroes_when_file_is_missing(tmp_path) -> None:
         "total_views": 0,
         "unique_visitors": 0,
         "last_viewed_at": None,
+        "suppressed_views": 0,
+        "dedupe_window_seconds": 60,
     }
     assert settings.view_counter_path.exists()
 
