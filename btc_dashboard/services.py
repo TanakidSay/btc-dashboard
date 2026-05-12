@@ -1156,8 +1156,6 @@ def get_etf_flow(settings: Settings) -> dict[str, Any]:
 
 def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
     manual_data = _get_etf_flow_from_manual_file(settings)
-    if manual_data["source"] != "fallback":
-        return manual_data
     for loader in (_get_etf_flow_from_farside_latest, _get_etf_flow_from_farside):
         farside_data = loader(settings)
         if farside_data["source"] != "fallback":
@@ -1177,6 +1175,8 @@ def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
         fallback_data = loader(settings)
         if fallback_data["source"] != "fallback":
             return fallback_data
+    if manual_data["source"] != "fallback":
+        return manual_data
     return _get_seeded_etf_flow()
 
 

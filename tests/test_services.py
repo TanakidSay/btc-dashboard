@@ -1231,12 +1231,50 @@ def test_get_etf_flow_uses_bitbo_public_table(monkeypatch, tmp_path) -> None:
     assert len(payload["flow_history"]) == 2
 
 
-def test_get_etf_flow_uses_manual_json_before_farside(
+def test_get_etf_flow_prefers_live_source_over_manual_json(
     monkeypatch,
     tmp_path,
 ) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
-        raise AssertionError(f"manual ETF file should avoid network request: {url}")
+        if "farside.co.uk/btc/" in url:
+            return FakeResponse(text="10 May 2026 321.0 0.0 0.0 0.0 321.0")
+        return FakeResponse(status_code=503)
+
+    manual_path = tmp_path / "etf_flows.json"
+    manual_path.write_text(
+        json.dumps({
+            "source": "manual",
+            "updated_at": "2026-05-10T00:00:00Z",
+            "flow_history": [
+                {"date": "2026-05-08", "net_flow_usd": -45_000_000},
+                {"date": "2026-05-09", "net_flow_usd": 123_000_000},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path, etf_flow_path=manual_path))
+
+    assert payload["source"] == "farside-latest"
+    assert payload["source_label"] == "Live"
+    assert payload["is_fallback"] is False
+    assert payload["is_stale"] is False
+    assert payload["latest_date"] == "10 May 2026"
+    assert payload["latest_net_flow_usd"] == 321_000_000.0
+    assert payload["data_note"] == "ETF flow history is using live source data."
+
+
+def test_get_etf_flow_uses_manual_json_when_live_sources_fail(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
 
     manual_path = tmp_path / "etf_flows.json"
     manual_path.write_text(
@@ -1379,9 +1417,7 @@ def test_get_etf_flow_stale_manual_json_is_marked_stale(
     tmp_path,
 ) -> None:
     def fake_get(url: str, **kwargs) -> FakeResponse:
-        if "farside.co.uk" in url:
-            return FakeResponse(status_code=403)
-        raise AssertionError(f"unexpected ETF source after manual file: {url}")
+        return FakeResponse(status_code=503)
 
     manual_path = tmp_path / "etf_flows.json"
     manual_path.write_text(
