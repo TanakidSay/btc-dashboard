@@ -19,7 +19,7 @@ import pandas as pd
 import requests
 from requests.auth import HTTPBasicAuth
 
-from .config import Settings
+from .config import BASE_DIR, Settings
 
 session = requests.Session()
 logger = logging.getLogger(__name__)
@@ -65,6 +65,7 @@ FARSIDE_BTC_ETF_LATEST_URL = "https://farside.co.uk/btc/"
 BITBO_BTC_ETF_FLOW_URL = "https://bitbo.io/treasuries/etf-flows/"
 WALLETPILOT_BTC_ETF_URL = "https://www.walletpilot.com/bitcoin-tracker/etfs"
 GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flows"
+BUNDLED_ETF_FLOW_PATH = BASE_DIR / "data/etf_flows.json"
 COINGECKO_TREASURY_URLS = (
     "https://api.coingecko.com/api/v3/entities/public_treasury/bitcoin",
     "https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin",
@@ -1364,6 +1365,7 @@ def _get_etf_flow_from_bitbo(settings: Settings) -> dict[str, Any]:
 
 def _get_etf_flow_from_manual_file(settings: Settings) -> dict[str, Any]:
     path = settings.etf_flow_path
+    _seed_manual_etf_file_if_needed(path)
     if not path.exists():
         return deepcopy(FALLBACK_ETF_FLOW)
 
@@ -1392,6 +1394,27 @@ def _get_etf_flow_from_manual_file(settings: Settings) -> dict[str, Any]:
         fallback = deepcopy(FALLBACK_ETF_FLOW)
         fallback["error"] = str(exc)
         return fallback
+
+
+def _seed_manual_etf_file_if_needed(path: Path) -> None:
+    if path.exists() or not _should_seed_manual_etf_file(path):
+        return
+    try:
+        with BUNDLED_ETF_FLOW_PATH.open(encoding="utf-8") as file:
+            data = json.load(file)
+        if not isinstance(data.get("flow_history"), list) or not data["flow_history"]:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(data, file, indent=2)
+            file.write("\n")
+        logger.info("Seeded manual ETF flow file at %s from bundled data", path)
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.warning("Unable to seed manual ETF flow file at %s: %s", path, exc)
+
+
+def _should_seed_manual_etf_file(path: Path) -> bool:
+    return path.as_posix() == "/data/etf_flows.json"
 
 
 def _get_etf_flow_from_walletpilot(settings: Settings) -> dict[str, Any]:
