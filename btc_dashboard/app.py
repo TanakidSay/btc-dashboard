@@ -6,7 +6,7 @@ import sys
 from hmac import compare_digest
 from pathlib import Path
 
-from flask import Flask, Response, request
+from flask import Flask, Response, redirect, request
 
 if __package__:
     from .config import Settings
@@ -29,6 +29,16 @@ def create_app(settings: Settings | None = None) -> Flask:
         SECRET_KEY=settings.secret_key,
         DASHBOARD_SETTINGS=settings,
     )
+
+    @app.before_request
+    def redirect_to_canonical_host():
+        if request.endpoint in {"api.healthz", "static"}:
+            return None
+        if not _should_redirect_to_canonical_host(settings):
+            return None
+
+        path = request.full_path.rstrip("?")
+        return redirect(f"https://{settings.canonical_host}{path}", code=308)
 
     @app.before_request
     def require_dashboard_auth():
@@ -77,6 +87,16 @@ def create_app(settings: Settings | None = None) -> Flask:
         start_background_worker(settings)
 
     return app
+
+
+def _should_redirect_to_canonical_host(settings: Settings) -> bool:
+    canonical_host = (settings.canonical_host or "").strip().lower()
+    if not canonical_host:
+        return False
+
+    current_host = request.host.split(":", 1)[0].strip().lower()
+    redirect_hosts = {host.strip().lower() for host in settings.canonical_redirect_hosts}
+    return current_host in redirect_hosts and current_host != canonical_host
 
 
 def _is_authorized_request(settings: Settings) -> bool:

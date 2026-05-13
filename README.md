@@ -169,6 +169,8 @@ VIEWER_STATS_INITIAL_UNIQUE=0
 ETF_FLOW_FILE=data/etf_flows.json
 BTC_PRICE_BASELINE_FILE=data/btc_price_baseline.json
 ETF_FLOW_TTL_SECONDS=43200
+CANONICAL_HOST=btcwindow.uk
+CANONICAL_REDIRECT_HOSTS=btcwindow.up.railway.app
 ```
 
 `VIEW_COUNTER_FILE` stores the persistent total page-view count. The app creates
@@ -187,6 +189,10 @@ backend ETF refresh cadence and is clamped to a one-hour minimum.
 
 If live treasury sources are unavailable, the dashboard uses a clearly labeled
 checked public estimate instead of showing blank institutional cards.
+
+`CANONICAL_HOST` is the primary dashboard domain. Requests from any comma-separated
+host in `CANONICAL_REDIRECT_HOSTS` redirect to it, which keeps the Railway
+generated URL from becoming the public canonical URL.
 
 ```json
 {

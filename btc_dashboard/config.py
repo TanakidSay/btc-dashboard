@@ -20,6 +20,13 @@ def _bool_from_env(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _tuple_from_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     secret_key: str
@@ -64,6 +71,8 @@ class Settings:
     coinglass_api_key: str | None = None
     coingecko_demo_api_key: str | None = None
     sosovalue_api_key: str | None = None
+    canonical_host: str = "btcwindow.uk"
+    canonical_redirect_hosts: tuple[str, ...] = ("btcwindow.up.railway.app",)
 
     @property
     def dashboard_auth_enabled(self) -> bool:
@@ -148,4 +157,9 @@ class Settings:
             coinglass_api_key=os.getenv("COINGLASS_API_KEY") or None,
             coingecko_demo_api_key=os.getenv("COINGECKO_DEMO_API_KEY") or None,
             sosovalue_api_key=os.getenv("SOSOVALUE_API_KEY") or None,
+            canonical_host=os.getenv("CANONICAL_HOST", "btcwindow.uk").strip(),
+            canonical_redirect_hosts=_tuple_from_env(
+                "CANONICAL_REDIRECT_HOSTS",
+                ("btcwindow.up.railway.app",),
+            ),
         )

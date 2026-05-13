@@ -100,6 +100,28 @@ def test_health_alias_stays_public_when_auth_is_enabled(monkeypatch, tmp_path) -
     assert response.status_code == 200
 
 
+def test_railway_host_redirects_to_canonical_domain(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get(
+        "/api/metrics?source=railway",
+        headers={"Host": "btcwindow.up.railway.app"},
+    )
+
+    assert response.status_code == 308
+    assert response.headers["Location"] == "https://btcwindow.uk/api/metrics?source=railway"
+
+
+def test_health_check_does_not_redirect_on_railway_host(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/health", headers={"Host": "btcwindow.up.railway.app"})
+
+    assert response.status_code == 200
+
+
 def test_index_records_viewer_stats(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path))
