@@ -178,12 +178,12 @@ redeployments. `VIEW_COUNTER_INITIAL_TOTAL` seeds a missing counter file once,
 which is useful when moving an existing deployment to a persistent volume.
 `VIEWER_STATS_INITIAL_UNIQUE` does the same for the visible unique visitor count.
 
-`ETF_FLOW_FILE` is an optional manual ETF flow file. If it contains valid rows,
-the dashboard uses it before live ETF scraping so production hosts do not depend
-on Farside availability. This is useful because ETF flow is daily market data,
-not a real-time price feed. The dashboard labels this data as `Manual`, not live
-data. `ETF_FLOW_TTL_SECONDS` controls backend ETF refresh cadence and is clamped
-to a one-hour minimum.
+`ETF_FLOW_FILE` is an optional manual ETF flow file. If Farside and configured
+API sources are unavailable and this file contains valid rows, the dashboard
+uses it before public fallback scrapes or seeded estimates. This is useful
+because ETF flow is daily market data, not a real-time price feed. The dashboard
+labels this data as `Manual`, not live data. `ETF_FLOW_TTL_SECONDS` controls
+backend ETF refresh cadence and is clamped to a one-hour minimum.
 
 If live treasury sources are unavailable, the dashboard uses a clearly labeled
 checked public estimate instead of showing blank institutional cards.

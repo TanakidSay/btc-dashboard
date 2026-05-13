@@ -1240,9 +1240,6 @@ def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
         farside_data = loader(settings)
         if farside_data["source"] != "fallback":
             return farside_data
-    bitbo_data = _get_etf_flow_from_bitbo(settings)
-    if bitbo_data["source"] != "fallback":
-        return bitbo_data
     if settings.coinglass_api_key:
         coinglass_data = _get_etf_flow_from_coinglass(settings)
         if coinglass_data["source"] != "fallback":
@@ -1251,12 +1248,15 @@ def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
         soso_data = _get_etf_flow_from_sosovalue(settings)
         if soso_data["source"] != "fallback":
             return soso_data
+    if manual_data["source"] != "fallback":
+        return manual_data
+    bitbo_data = _get_etf_flow_from_bitbo(settings)
+    if bitbo_data["source"] != "fallback":
+        return bitbo_data
     for loader in (_get_etf_flow_from_walletpilot, _get_etf_flow_from_globalcoinguide):
         fallback_data = loader(settings)
         if fallback_data["source"] != "fallback":
             return fallback_data
-    if manual_data["source"] != "fallback":
-        return manual_data
     return _get_seeded_etf_flow()
 
 

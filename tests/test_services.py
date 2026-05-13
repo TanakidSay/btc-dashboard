@@ -1340,6 +1340,44 @@ def test_get_etf_flow_uses_manual_json_when_live_sources_fail(
     assert payload["data_note"] == "ETF flow data loaded from local manual file."
 
 
+def test_get_etf_flow_uses_manual_json_before_public_fallbacks(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    requested_urls = []
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        requested_urls.append(url)
+        if "farside.co.uk" in url:
+            return FakeResponse(status_code=503)
+        if "bitbo.io/treasuries/etf-flows" in url:
+            return FakeResponse(
+                text="Date IBIT FBTC GBTC Totals May 10, 2026 200.0 0.0 0.0 200.0",
+            )
+        return FakeResponse(status_code=503)
+
+    manual_path = tmp_path / "etf_flows.json"
+    manual_path.write_text(
+        json.dumps({
+            "source": "manual",
+            "updated_at": "2026-05-10T00:00:00Z",
+            "flow_history": [{"date": "2026-05-09", "net_flow_usd": 123_000_000}],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 10, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path, etf_flow_path=manual_path))
+
+    assert payload["source"] == "manual"
+    assert payload["latest_net_flow_usd"] == 123_000_000.0
+    assert not any("bitbo.io" in url for url in requested_urls)
+
+
 def test_get_etf_flow_empty_manual_file_skips_to_farside_without_warning(
     monkeypatch,
     tmp_path,
