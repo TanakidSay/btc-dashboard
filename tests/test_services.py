@@ -1396,7 +1396,7 @@ def test_get_etf_flow_seeds_railway_volume_manual_file(
     )
     volume_path = tmp_path / "data" / "etf_flows.json"
     monkeypatch.setattr("btc_dashboard.services.BUNDLED_ETF_FLOW_PATH", bundled_path)
-    monkeypatch.setattr("btc_dashboard.services._should_seed_manual_etf_file", lambda path: True)
+    monkeypatch.setattr("btc_dashboard.services._should_sync_manual_etf_file", lambda path: True)
     monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
     monkeypatch.setattr(
         "btc_dashboard.services._utc_now_dt",
@@ -1409,6 +1409,52 @@ def test_get_etf_flow_seeds_railway_volume_manual_file(
     assert payload["source"] == "manual"
     assert payload["latest_date"] == "2026-05-12"
     assert payload["latest_net_flow_usd"] == -233_200_000.0
+
+
+def test_get_etf_flow_updates_railway_volume_manual_file_when_bundled_is_newer(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    bundled_path = tmp_path / "bundled_etf_flows.json"
+    bundled_path.write_text(
+        json.dumps({
+            "source": "manual",
+            "updated_at": "2026-05-15T00:00:00Z",
+            "flow_history": [
+                {"date": "2026-05-12", "net_flow_usd": -233_200_000},
+                {"date": "2026-05-14", "net_flow_usd": 131_300_000},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    volume_path = tmp_path / "data" / "etf_flows.json"
+    volume_path.parent.mkdir(parents=True)
+    volume_path.write_text(
+        json.dumps({
+            "source": "manual",
+            "updated_at": "2026-05-13T00:00:00Z",
+            "flow_history": [{"date": "2026-05-12", "net_flow_usd": -233_200_000}],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("btc_dashboard.services.BUNDLED_ETF_FLOW_PATH", bundled_path)
+    monkeypatch.setattr("btc_dashboard.services._should_sync_manual_etf_file", lambda path: True)
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 15, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path, etf_flow_path=volume_path))
+
+    saved_data = json.loads(volume_path.read_text(encoding="utf-8"))
+    assert saved_data["updated_at"] == "2026-05-15T00:00:00Z"
+    assert payload["source"] == "manual"
+    assert payload["latest_date"] == "2026-05-14"
+    assert payload["latest_net_flow_usd"] == 131_300_000.0
 
 
 def test_get_etf_flow_empty_manual_file_skips_to_farside_without_warning(

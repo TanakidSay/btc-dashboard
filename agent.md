@@ -10,6 +10,13 @@ the task.
 price, hashrate, network-node metrics, ownership analytics, alerts, viewer
 tracking, and optional X posting.
 
+Current public production URL:
+
+- Primary domain: `https://btcwindow.uk`
+- Railway generated domain: `https://btcwindow.up.railway.app`
+- The app redirects the Railway generated domain to the primary domain, except
+  health checks.
+
 Important paths:
 
 - `btc_dashboard/app.py` creates the Flask app, auth, security headers, and worker startup.
@@ -23,6 +30,15 @@ Important paths:
 - `btc_dashboard/static/dashboard.js` handles client-side refresh and interactions.
 - `tests/` contains the Pytest suite.
 - `data/` contains local CSV/state files used by the app.
+
+Current notable data files:
+
+- `data/etf_flows.json` is the bundled manual ETF flow file.
+- `data/view_counter.json`, `data/viewer_stats.json`, and
+  `data/viewer_analytics.json` are local runtime state when not using Railway
+  Volume paths.
+- `data/btc_price_baseline.json` stores the 7 AM Bangkok BTC price baseline
+  used for the dashboard's 24h-style change comparison.
 
 ## Common Commands
 
@@ -82,13 +98,27 @@ The app is designed to tolerate external data-source failures:
 - Bitcoin Core RPC is the primary source for block fees, transaction counts, and hashrate.
 - If RPC is unavailable, public fallbacks such as mempool.space are used where equivalent endpoints exist.
 - BTC price uses Binance first, then falls back to CoinGecko and mempool.space.
+- BTC price change is compared against a persisted Bangkok 7 AM baseline so it
+  does not collapse to zero between refreshes.
 - Node count uses Bitnodes as a global reachable-node snapshot.
+- ETF flow uses Farside first when available. If API keys are configured, it can
+  use CoinGlass and SoSoValue. If those sources are unavailable, it uses the
+  manual ETF JSON file before public fallback scrapes and seeded estimates.
+- If `ETF_FLOW_FILE=/data/etf_flows.json` is configured on Railway and the file
+  does not exist yet, the app seeds it once from bundled `data/etf_flows.json`.
+- Seeded ETF fallback data must remain clearly labeled as fallback estimate; do
+  not present it as live data.
 - Ownership analytics must remain transparent. Estimates and limited-visibility values
   should never be presented as exact live ownership facts.
+- Treasury fallback top holders are aligned to the checked CoinGecko-style public
+  company list and should not invent unclear/non-canonical holders.
 - During refresh failures, preserve last known good values where the existing design supports it.
 
 When adding a fallback, make the source, freshness, and failure mode clear in
 code or tests.
+
+ETF flow is daily US market data, not a realtime price feed. Verify latest ETF
+facts before updating manual values.
 
 ## Important Environment Variables
 
@@ -116,18 +146,54 @@ Commonly relevant variables:
 - `COINGLASS_API_KEY`
 - `COINGECKO_DEMO_API_KEY`
 - `SOSOVALUE_API_KEY`
+- `VIEW_COUNTER_FILE`
+- `VIEWER_STATS_FILE`
+- `VIEWER_ANALYTICS_FILE`
+- `ETF_FLOW_FILE`
+- `BTC_PRICE_BASELINE_FILE`
+- `CANONICAL_HOST`
+- `CANONICAL_REDIRECT_HOSTS`
 
 Production must use real secrets and dashboard authentication.
+
+Railway production currently uses a mounted Volume at `/data`. Persistent state
+should point at files inside that mount, for example:
+
+```env
+VIEW_COUNTER_FILE=/data/view_counter.json
+VIEWER_STATS_FILE=/data/viewer_stats.json
+VIEWER_ANALYTICS_FILE=/data/viewer_analytics.json
+ETF_FLOW_FILE=/data/etf_flows.json
+BTC_PRICE_BASELINE_FILE=/data/btc_price_baseline.json
+CANONICAL_HOST=btcwindow.uk
+CANONICAL_REDIRECT_HOSTS=btcwindow.up.railway.app
+```
 
 ## Security Notes
 
 - `btc_dashboard/app.py` provides Basic Auth, Bearer token auth, and security headers.
 - `/healthz` is intentionally accessible without auth for health checks.
+- `/health` is also available for host health checks.
 - Never expose Bitcoin Core RPC port `8332` directly to the internet.
 - Production should run behind HTTPS through a reverse proxy such as Caddy,
   Nginx, or Cloudflare.
+- Production is currently fronted by Cloudflare. Cloudflare should cache static
+  assets under `/static/*` only; do not cache `/api/*` because price, ETF, and
+  viewer metrics must remain fresh.
 - Do not weaken CSP or other security headers unless the reason is clear and
   covered by tests.
+
+Viewer tracking notes:
+
+- `Total Views` increments on page requests to `/`.
+- `Unique Visitors` is based on a persistent fingerprint, roughly IP plus
+  User-Agent, so the same visitor normally does not increase unique count again
+  on later days unless their fingerprint changes.
+- `/api/viewers` returns the summary card values.
+- `/api/viewer-analytics` returns aggregate sources, referrers, devices,
+  browsers, countries, paths, recent events, and suppressed duplicate events.
+- Viewer analytics intentionally stores aggregate/privacy-preserving data rather
+  than raw IP addresses.
 
 ## Testing Notes
 
@@ -163,6 +229,16 @@ Health check paths may be `/health` or `/healthz` depending on the host/config.
 Check the actual route definitions in `btc_dashboard/routes.py` before changing
 deployment settings.
 
+Railway production details:
+
+- `railway.toml` starts Gunicorn bound to `0.0.0.0:$PORT`.
+- Railway custom domain should target port `8080` / the detected web port shown
+  by Railway for this service.
+- The public custom domain is `btcwindow.uk`.
+- Cloudflare SSL mode is expected to be `Full` or `Full (strict)`.
+- Cloudflare DNS includes Railway custom-domain verification records and routes
+  `btcwindow.uk` to Railway.
+
 ## Working Agreement
 
 - Start with `git status --short` and preserve any existing user changes.
@@ -171,4 +247,6 @@ deployment settings.
 - Avoid unrelated refactors.
 - Verify current external facts before relying on data that may have changed,
   including prices, ETF data, API behavior, laws, or hosting-platform behavior.
+- Do not commit or push automatically. Ask the user before every commit and
+  every push unless the current user message explicitly says to commit or push.
 - Final responses should briefly state what changed and which checks were run.

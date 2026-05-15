@@ -1,6 +1,6 @@
 {
   "source": "manual",
-  "updated_at": "2026-05-13T00:00:00Z",
+  "updated_at": "2026-05-15T00:00:00Z",
   "flow_history": [
     {"date": "2026-04-28", "net_flow_usd": -89700000},
     {"date": "2026-04-29", "net_flow_usd": -137600000},
@@ -12,6 +12,8 @@
     {"date": "2026-05-07", "net_flow_usd": -268500000},
     {"date": "2026-05-08", "net_flow_usd": -145700000},
     {"date": "2026-05-11", "net_flow_usd": 27200000},
-    {"date": "2026-05-12", "net_flow_usd": -233200000}
+    {"date": "2026-05-12", "net_flow_usd": -233200000},
+    {"date": "2026-05-13", "net_flow_usd": -630400000},
+    {"date": "2026-05-14", "net_flow_usd": 131300000}
   ]
 }

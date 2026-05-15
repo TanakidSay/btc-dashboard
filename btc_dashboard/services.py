@@ -1365,7 +1365,7 @@ def _get_etf_flow_from_bitbo(settings: Settings) -> dict[str, Any]:
 
 def _get_etf_flow_from_manual_file(settings: Settings) -> dict[str, Any]:
     path = settings.etf_flow_path
-    _seed_manual_etf_file_if_needed(path)
+    _sync_manual_etf_file_if_needed(path)
     if not path.exists():
         return deepcopy(FALLBACK_ETF_FLOW)
 
@@ -1396,24 +1396,54 @@ def _get_etf_flow_from_manual_file(settings: Settings) -> dict[str, Any]:
         return fallback
 
 
-def _seed_manual_etf_file_if_needed(path: Path) -> None:
-    if path.exists() or not _should_seed_manual_etf_file(path):
+def _sync_manual_etf_file_if_needed(path: Path) -> None:
+    if not _should_sync_manual_etf_file(path):
         return
     try:
-        with BUNDLED_ETF_FLOW_PATH.open(encoding="utf-8") as file:
-            data = json.load(file)
-        if not isinstance(data.get("flow_history"), list) or not data["flow_history"]:
+        bundled_data = _load_manual_etf_json(BUNDLED_ETF_FLOW_PATH)
+        if not _manual_etf_history_latest_date(bundled_data):
             return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as file:
-            json.dump(data, file, indent=2)
-            file.write("\n")
-        logger.info("Seeded manual ETF flow file at %s from bundled data", path)
+        if path.exists():
+            current_data = _load_manual_etf_json(path)
+            current_latest = _manual_etf_history_latest_date(current_data)
+            bundled_latest = _manual_etf_history_latest_date(bundled_data)
+            if current_latest is not None and current_latest >= bundled_latest:
+                return
+        _write_manual_etf_json(path, bundled_data)
+        logger.info("Synced manual ETF flow file at %s from bundled data", path)
     except (OSError, json.JSONDecodeError, TypeError) as exc:
-        logger.warning("Unable to seed manual ETF flow file at %s: %s", path, exc)
+        logger.warning("Unable to sync manual ETF flow file at %s: %s", path, exc)
 
 
-def _should_seed_manual_etf_file(path: Path) -> bool:
+def _load_manual_etf_json(path: Path) -> dict[str, Any]:
+    with path.open(encoding="utf-8") as file:
+        data = json.load(file)
+    if not isinstance(data, dict):
+        raise TypeError("manual ETF flow file must be an object")
+    return data
+
+
+def _write_manual_etf_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2)
+        file.write("\n")
+
+
+def _manual_etf_history_latest_date(data: dict[str, Any]) -> datetime.date | None:
+    history = data.get("flow_history")
+    if not isinstance(history, list) or not history:
+        return None
+    latest_dates = [
+        parsed
+        for row in history
+        if isinstance(row, dict)
+        and (parsed := _parse_etf_date(str(row.get("date") or ""))) is not None
+    ]
+    return max(latest_dates) if latest_dates else None
+
+
+def _should_sync_manual_etf_file(path: Path) -> bool:
     return path.as_posix() == "/data/etf_flows.json"
 
 
