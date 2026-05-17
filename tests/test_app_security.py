@@ -366,6 +366,56 @@ def test_signals_policy_route(monkeypatch, tmp_path) -> None:
     assert body["daily_post_hour"] == 9
 
 
+def test_api_signals_returns_today_signal_payload(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_today_signals",
+        lambda: {
+            "status": "ok",
+            "updated_at": "2026-05-17T00:00:00Z",
+            "summary": "Fees look calm while ETF demand is supportive.",
+            "action": "Good time to transfer",
+            "signals": [
+                {
+                    "key": "cheapest_fee_window",
+                    "label": "Cheapest Fee Window",
+                    "status": "cheap",
+                    "value": "3.0 sat/vB",
+                    "message": "Fees are below the recent average.",
+                    "action": "Good time to transfer",
+                }
+            ],
+            "ttl_seconds": 300,
+        },
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/signals")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["summary"] == "Fees look calm while ETF demand is supportive."
+    assert body["action"] == "Good time to transfer"
+    assert body["signals"][0]["key"] == "cheapest_fee_window"
+
+
+def test_api_signals_returns_safe_fallback_on_error(monkeypatch, tmp_path) -> None:
+    def fail_signals():
+        raise RuntimeError("cache unavailable")
+
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr("btc_dashboard.routes.get_today_signals", fail_signals)
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/signals")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["status"] == "neutral"
+    assert body["summary"] == "Waiting for data"
+    assert body["signals"][0]["value"] == "N/A"
+
+
 def test_x_test_post_preview_mode(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path, enable_x_test_post=True, enable_x_posting=False))
@@ -493,12 +543,18 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert 'startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000)' in js
     assert 'startRefreshJob("btc-price-chart", refreshPriceChart, 60000)' in js
     assert 'startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000)' in js
+    assert 'startRefreshJob("today-signals", updateTodaySignals, 60000)' in js
     assert 'startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000)' in js
     assert 'startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000)' in js
     assert 'startRefreshJob("institutional", refreshInstitutionalMetrics, 60 * 60 * 1000)' in js
     assert "supplyInsightCards" in html
     assert "etfFlowNote" in html
     assert "Effective liquid supply" in html
+    assert "Today Signals" in html
+    assert "Cheapest Fee Window" in html
+    assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
+    assert 'property="og:title"' in html
+    assert 'name="twitter:card"' in html
 
 
 def test_frontend_includes_generational_wealth_branding_asset() -> None:
