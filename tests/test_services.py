@@ -286,6 +286,36 @@ def test_record_view_updates_aggregate_viewer_analytics(tmp_path) -> None:
     assert "203.0.113" not in json.dumps(analytics)
 
 
+def test_record_view_groups_youtube_and_tiktok_referrers(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    record_view(settings, "203.0.113.21", "Chrome", "https://youtu.be/abc123", "/", "TH")
+    record_view(
+        settings,
+        "203.0.113.22",
+        "Chrome",
+        "https://m.youtube.com/watch?v=abc123",
+        "/",
+        "TH",
+    )
+    record_view(
+        settings,
+        "203.0.113.23",
+        "Chrome",
+        "https://vm.tiktok.com/ZMabc123/",
+        "/",
+        "TH",
+    )
+    record_view(settings, "203.0.113.24", "Chrome", "https://notyoutube.com/", "/", "TH")
+
+    analytics = get_viewer_analytics(settings)
+
+    assert analytics["sources"] == {"youtube": 2, "tiktok": 1, "other": 1}
+    assert analytics["referrers"]["youtu.be"] == 1
+    assert analytics["referrers"]["m.youtube.com"] == 1
+    assert analytics["referrers"]["vm.tiktok.com"] == 1
+
+
 def test_viewer_analytics_suppresses_duplicate_events_within_dedupe_window(
     monkeypatch,
     tmp_path,

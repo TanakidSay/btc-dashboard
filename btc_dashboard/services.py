@@ -682,15 +682,30 @@ def _viewer_source(referrer: str | None) -> str:
     host = _viewer_referrer_host(referrer)
     if host == "direct":
         return "direct"
-    if "x.com" in host or "twitter.com" in host or "t.co" in host:
+    if _viewer_host_matches(host, ("x.com", "twitter.com", "t.co")):
         return "x"
-    if "google." in host:
+    if _viewer_host_matches(host, ("youtube.com", "youtu.be", "youtube-nocookie.com")):
+        return "youtube"
+    if _viewer_host_matches(host, ("tiktok.com", "tiktokv.com")):
+        return "tiktok"
+    if _viewer_host_matches(host, ("google.",)):
         return "google"
-    if "facebook." in host:
+    if _viewer_host_matches(host, ("facebook.",)):
         return "facebook"
-    if "reddit." in host:
+    if _viewer_host_matches(host, ("reddit.",)):
         return "reddit"
     return "other"
+
+
+def _viewer_host_matches(host: str, domains: tuple[str, ...]) -> bool:
+    for domain in domains:
+        if domain.endswith("."):
+            if host.startswith(domain) or f".{domain}" in host:
+                return True
+            continue
+        if host == domain or host.endswith(f".{domain}"):
+            return True
+    return False
 
 
 def _viewer_referrer_host(referrer: str | None) -> str:
