@@ -211,6 +211,14 @@ Manual ETF update notes:
 - The endpoint merges incoming `flow_history` rows with existing manual history
   by date, so sending only the latest date appends/replaces that date instead
   of wiping older chart history.
+- A previous production incident left ETF chart history with only one bar after
+  a one-row admin update. The fix is deployed: admin updates now merge by date.
+  If this happens again, restore by posting the full manual history once, then
+  verify `((Invoke-RestMethod "https://btcwindow.uk/api/etf").flow_history).Count`.
+- After the 2026-05-15 restore, the expected history count was `14` rows. Future
+  counts should be at least that unless old rows are intentionally pruned.
+- Do not assume latest-date verification is enough; always verify both
+  `latest_date` and `flow_history` count after ETF admin updates.
 - Do not expose this endpoint in the frontend.
 - On Windows PowerShell, avoid pasted JSON here-strings if `Invoke-RestMethod`
   reports invalid control characters. Build the payload as a PowerShell object
@@ -243,6 +251,7 @@ Invoke-RestMethod -Method Post -Uri "https://btcwindow.uk/api/admin/etf-flows" `
 ```powershell
 Invoke-RestMethod "https://btcwindow.uk/api/etf" |
   Select-Object latest_date, latest_net_flow_usd, source_label
+((Invoke-RestMethod "https://btcwindow.uk/api/etf").flow_history).Count
 ```
 
 ## Testing Notes
