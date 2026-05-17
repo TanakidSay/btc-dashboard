@@ -20,6 +20,8 @@ from .services import (
     get_today_signals,
     get_viewer_analytics,
     get_viewer_stats,
+    load_recent_alerts,
+    record_alert_history,
     record_view,
     snapshot,
     state,
@@ -385,11 +387,16 @@ def api_alert():
             whale_transactions=whale_transactions,
             whale_alert_threshold_btc=settings.whale_alert_threshold_btc,
         )
+        recent_alerts = record_alert_history(settings, alerts)
         alert_text = " | ".join(alert["message"] for alert in alerts) if alerts else None
-        return jsonify({"alert": alert_text, "alerts": alerts})
+        return jsonify({"alert": alert_text, "alerts": alerts, "recent_alerts": recent_alerts})
     except Exception as exc:
         current_app.logger.exception("/api/alert failed: %s", exc)
-        return jsonify({"alert": None, "alerts": []})
+        try:
+            recent_alerts = load_recent_alerts(_settings())
+        except Exception:
+            recent_alerts = []
+        return jsonify({"alert": None, "alerts": [], "recent_alerts": recent_alerts})
 
 
 @api.route("/api/signals")

@@ -34,6 +34,7 @@ class Settings:
     viewer_stats_path: Path = BASE_DIR / "data/viewer_stats.json"
     viewer_analytics_path: Path = BASE_DIR / "data/viewer_analytics.json"
     view_counter_path: Path = BASE_DIR / "data/view_counter.json"
+    alerts_history_path: Path = BASE_DIR / "data/alerts_history.json"
     etf_flow_path: Path = BASE_DIR / "data/etf_flows.json"
     btc_price_baseline_path: Path = BASE_DIR / "data/btc_price_baseline.json"
     dashboard_username: str | None = None
@@ -101,6 +102,9 @@ class Settings:
         view_counter_path = Path(os.getenv("VIEW_COUNTER_FILE", "data/view_counter.json"))
         if not view_counter_path.is_absolute():
             view_counter_path = BASE_DIR / view_counter_path
+        alerts_history_path = Path(os.getenv("ALERTS_HISTORY_FILE", "data/alerts_history.json"))
+        if not alerts_history_path.is_absolute():
+            alerts_history_path = BASE_DIR / alerts_history_path
         etf_flow_path = Path(os.getenv("ETF_FLOW_FILE", "data/etf_flows.json"))
         if not etf_flow_path.is_absolute():
             etf_flow_path = BASE_DIR / etf_flow_path
@@ -122,6 +126,7 @@ class Settings:
             viewer_stats_path=viewer_stats_path,
             viewer_analytics_path=viewer_analytics_path,
             view_counter_path=view_counter_path,
+            alerts_history_path=alerts_history_path,
             etf_flow_path=etf_flow_path,
             btc_price_baseline_path=btc_price_baseline_path,
             dashboard_username=os.getenv("DASHBOARD_USERNAME") or None,

@@ -43,8 +43,10 @@ from btc_dashboard.services import (
     get_viewer_analytics,
     get_viewer_stats,
     increment_total_views,
+    load_recent_alerts,
     load_total_views,
     price_breakout_alert,
+    record_alert_history,
     record_view,
     save_total_views,
     state,
@@ -108,6 +110,25 @@ def test_today_signals_returns_safe_fallback_when_data_missing(tmp_path) -> None
     assert all(signal["message"] == "Waiting for data" for signal in payload["signals"])
 
 
+def test_today_signals_does_not_cache_waiting_payload(tmp_path) -> None:
+    _settings(tmp_path)
+    with state.lock:
+        state.fee_data = None
+
+    first = get_today_signals()
+    with state.lock:
+        state.fee_data = pd.DataFrame({
+            "height": [1, 2],
+            "sat_per_vbyte": [8.0, 3.0],
+            "tx_count": [100, 120],
+        })
+
+    second = get_today_signals()
+
+    assert first["summary"] == "Waiting for data"
+    assert second["signals"][0]["value"] == "3.0 sat/vB"
+
+
 def test_today_signals_uses_cached_fee_security_and_etf_data(tmp_path) -> None:
     _settings(tmp_path)
     with state.lock:
@@ -146,6 +167,27 @@ def test_today_signals_uses_cached_fee_security_and_etf_data(tmp_path) -> None:
     assert signals["network_stress"]["status"] == "low"
     assert signals["etf_trend"]["status"] == "inflow"
     assert signals["etf_trend"]["value"] == "+$125.00M (2026-05-15)"
+
+
+def test_alert_history_records_recent_alerts_without_duplicates(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    alerts = [
+        {
+            "type": "fee_spike",
+            "severity": "high",
+            "status": "red",
+            "message": "Fee Spike: 10 sat/vB",
+            "action": "Wait if not urgent",
+            "height": "100",
+        }
+    ]
+
+    first = record_alert_history(settings, alerts)
+    second = record_alert_history(settings, alerts)
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert load_recent_alerts(settings)[0]["message"] == "Fee Spike: 10 sat/vB"
 
 
 def test_whale_transaction_alert_detects_large_mempool_transaction() -> None:
@@ -244,6 +286,7 @@ def _settings(tmp_path, **overrides) -> Settings:
         "viewer_stats_path": tmp_path / "viewer_stats.json",
         "viewer_analytics_path": tmp_path / "viewer_analytics.json",
         "view_counter_path": tmp_path / "view_counter.json",
+        "alerts_history_path": tmp_path / "alerts_history.json",
         "etf_flow_path": tmp_path / "etf_flows.json",
         "btc_price_baseline_path": tmp_path / "btc_price_baseline.json",
         "etf_flow_ttl_seconds": 12 * 60 * 60,

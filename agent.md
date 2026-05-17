@@ -147,6 +147,7 @@ Commonly relevant variables:
 - `COINGECKO_DEMO_API_KEY`
 - `SOSOVALUE_API_KEY`
 - `VIEW_COUNTER_FILE`
+- `ALERTS_HISTORY_FILE`
 - `VIEWER_STATS_FILE`
 - `VIEWER_ANALYTICS_FILE`
 - `ETF_FLOW_FILE`
@@ -164,6 +165,7 @@ should point at files inside that mount, for example:
 VIEW_COUNTER_FILE=/data/view_counter.json
 VIEWER_STATS_FILE=/data/viewer_stats.json
 VIEWER_ANALYTICS_FILE=/data/viewer_analytics.json
+ALERTS_HISTORY_FILE=/data/alerts_history.json
 ETF_FLOW_FILE=/data/etf_flows.json
 ETF_ADMIN_TOKEN=<long-random-secret>
 BTC_PRICE_BASELINE_FILE=/data/btc_price_baseline.json
@@ -196,6 +198,15 @@ Viewer tracking notes:
   browsers, countries, paths, recent events, and suppressed duplicate events.
 - Viewer analytics intentionally stores aggregate/privacy-preserving data rather
   than raw IP addresses.
+
+Alert history notes:
+
+- `/api/alert` returns both currently active alerts and `recent_alerts`.
+- Recent alerts are stored in `ALERTS_HISTORY_FILE` and should point to the
+  Railway Volume in production, for example `/data/alerts_history.json`.
+- Alert history keeps a small deduped record so transient alerts do not flash
+  and disappear immediately from the UI.
+- Do not store IP addresses or user-identifying data in alert history.
 
 Time display notes:
 

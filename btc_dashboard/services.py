@@ -302,6 +302,7 @@ _cache: dict[str, CacheEntry] = {}
 _cache_refreshing: set[str] = set()
 _cache_lock = Lock()
 _viewer_lock = Lock()
+_alert_history_lock = Lock()
 _treasury_cache_lock = Lock()
 _treasury_result_cache: CacheEntry | None = None
 _last_successful_treasury: dict[str, Any] | None = None
@@ -441,6 +442,73 @@ def increment_total_views(path: Path, fallback: int = 0, floor: int = 0) -> int:
     total_views += 1
     save_total_views(path, total_views)
     return total_views
+
+
+def load_recent_alerts(settings: Settings, limit: int = 5) -> list[dict[str, Any]]:
+    with _alert_history_lock:
+        return _load_alert_history(settings.alerts_history_path)[:limit]
+
+
+def record_alert_history(
+    settings: Settings,
+    alerts: list[dict[str, Any]],
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    if not alerts:
+        return load_recent_alerts(settings)
+    now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    with _alert_history_lock:
+        history = _load_alert_history(settings.alerts_history_path)
+        known_keys = {str(item.get("event_key") or "") for item in history}
+        for alert in alerts:
+            event_key = _alert_event_key(alert)
+            if event_key in known_keys:
+                continue
+            history.insert(0, {
+                "event_key": event_key,
+                "type": alert.get("type", "alert"),
+                "severity": alert.get("severity", "medium"),
+                "status": alert.get("status", "yellow"),
+                "message": alert.get("message", ""),
+                "action": alert.get("action", ""),
+                "recorded_at": now_iso,
+            })
+            known_keys.add(event_key)
+        history = history[:limit]
+        _save_alert_history(settings.alerts_history_path, history)
+        return deepcopy(history[:5])
+
+
+def _alert_event_key(alert: dict[str, Any]) -> str:
+    parts = [
+        str(alert.get("type") or "alert"),
+        str(alert.get("message") or ""),
+        str(alert.get("height") or ""),
+        str(alert.get("txid") or ""),
+        str(alert.get("threshold") or ""),
+    ]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
+def _load_alert_history(path: Path) -> list[dict[str, Any]]:
+    path = Path(path)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _save_alert_history(path: Path, history: list[dict[str, Any]]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    temp_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+    temp_path.replace(path)
 
 
 def ensure_total_views_floor(path: Path, total_views: int, floor: int = 0) -> int:
@@ -2812,7 +2880,24 @@ def normalize_risk_level(level: Any, fallback: str = "low") -> str:
 
 
 def get_today_signals() -> dict[str, Any]:
-    return _cached_for("today_signals", TODAY_SIGNALS_TTL_SECONDS, _build_today_signals)
+    cached_value = _cache_get("today_signals")
+    if cached_value is not None:
+        return cached_value
+    payload = _build_today_signals()
+    if _today_signals_have_data(payload):
+        return _cache_set("today_signals", payload, TODAY_SIGNALS_TTL_SECONDS)
+    return payload
+
+
+def _today_signals_have_data(payload: dict[str, Any]) -> bool:
+    signals = payload.get("signals")
+    if not isinstance(signals, list):
+        return False
+    return any(
+        isinstance(signal, dict)
+        and signal.get("value") not in {None, "", "N/A"}
+        for signal in signals
+    )
 
 
 def _signal_waiting(key: str, label: str) -> dict[str, str]:

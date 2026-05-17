@@ -15,6 +15,7 @@ def _settings(tmp_path, **overrides) -> Settings:
         "viewer_stats_path": tmp_path / "viewer_stats.json",
         "viewer_analytics_path": tmp_path / "viewer_analytics.json",
         "view_counter_path": tmp_path / "view_counter.json",
+        "alerts_history_path": tmp_path / "alerts_history.json",
         "x_signal_state_path": tmp_path / "x_signal_state.json",
         "x_posted_events_path": tmp_path / "posted_events.json",
         "start_worker": False,
@@ -416,6 +417,33 @@ def test_api_signals_returns_safe_fallback_on_error(monkeypatch, tmp_path) -> No
     assert body["signals"][0]["value"] == "N/A"
 
 
+def test_api_alert_returns_recent_alert_history(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr("btc_dashboard.routes.get_recent_whale_transactions", lambda settings: [])
+    monkeypatch.setattr(
+        "btc_dashboard.routes.build_alerts",
+        lambda *args, **kwargs: [
+            {
+                "type": "fee_spike",
+                "severity": "high",
+                "status": "red",
+                "message": "Fee Spike: 10 sat/vB",
+                "action": "Wait if not urgent",
+                "height": "100",
+            }
+        ],
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/alert")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["alerts"][0]["message"] == "Fee Spike: 10 sat/vB"
+    assert body["recent_alerts"][0]["message"] == "Fee Spike: 10 sat/vB"
+    assert "recorded_at" in body["recent_alerts"][0]
+
+
 def test_x_test_post_preview_mode(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path, enable_x_test_post=True, enable_x_posting=False))
@@ -552,6 +580,8 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Effective liquid supply" in html
     assert "Today Signals" in html
     assert "Cheapest Fee Window" in html
+    assert "Recent Alerts" in html
+    assert "recentAlertBox" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
     assert 'property="og:title"' in html
     assert 'name="twitter:card"' in html

@@ -730,6 +730,28 @@ async function updateAlert() {
     const alertBox = document.getElementById("alertBox");
     const alertCount = document.getElementById("alertCount");
     const alerts = data.alerts ?? [];
+    const recentAlerts = data.recent_alerts ?? [];
+    const recentAlertBox = document.getElementById("recentAlertBox");
+    if (recentAlertBox) {
+        recentAlertBox.innerHTML = recentAlerts.length === 0
+            ? `<p class="text-xs text-gray-500">No recent alerts.</p>`
+            : recentAlerts.map((alert) => {
+                const status = alert.status ?? "yellow";
+                const borderColor = status === "red"
+                    ? "border-red-500/50 bg-red-950/25 text-red-100"
+                    : status === "green"
+                    ? "border-green-500/50 bg-green-950/25 text-green-100"
+                    : "border-amber-500/50 bg-amber-950/25 text-amber-100";
+                const time = alert.recorded_at ? formatDateTime(alert.recorded_at) : "";
+                return `<article class="rounded border ${borderColor} p-2">
+                    <div class="mb-1 flex items-center justify-between gap-3">
+                        <span class="text-xs font-semibold uppercase text-gray-300">${escapeHtml((alert.type ?? "").replaceAll("_"," "))}</span>
+                        <span class="text-xs text-gray-500">${escapeHtml(time)}</span>
+                    </div>
+                    <div class="text-sm font-semibold">${escapeHtml(alert.message ?? "")}</div>
+                </article>`;
+            }).join("");
+    }
     alertCount.innerText = `${alerts.length} active`;
     if (alerts.length === 0) {
         alertBox.innerHTML = `<p class="text-sm text-gray-400">No active alerts.</p>`;
