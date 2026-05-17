@@ -202,9 +202,48 @@ Manual ETF update notes:
 - `POST /api/admin/etf-flows` updates `ETF_FLOW_FILE` without redeploying.
 - It requires `Authorization: Bearer <ETF_ADMIN_TOKEN>`.
 - Keep `ETF_ADMIN_TOKEN` separate from dashboard auth tokens.
+- In Railway, set the token value without angle brackets. Use
+  `ETF_ADMIN_TOKEN=actual-secret`, not `ETF_ADMIN_TOKEN=<actual-secret>`.
+- After changing `ETF_ADMIN_TOKEN` in Railway, redeploy/restart the service so
+  the Flask process reloads the environment.
 - The endpoint is POST-only, validates the manual JSON payload, writes the file
   atomically, and clears ETF cache after a successful update.
+- The endpoint merges incoming `flow_history` rows with existing manual history
+  by date, so sending only the latest date appends/replaces that date instead
+  of wiping older chart history.
 - Do not expose this endpoint in the frontend.
+- On Windows PowerShell, avoid pasted JSON here-strings if `Invoke-RestMethod`
+  reports invalid control characters. Build the payload as a PowerShell object
+  and run `ConvertTo-Json -Depth 5 -Compress`.
+- Clean the local token before building headers:
+
+```powershell
+$env:ETF_ADMIN_TOKEN = "actual-secret"
+$token = ($env:ETF_ADMIN_TOKEN -replace '[\x00-\x1F\x7F]', '').Trim()
+$headers = @{ Authorization = "Bearer $token" }
+```
+
+- Minimal successful ETF update pattern:
+
+```powershell
+$payload = @{
+  source = "manual"
+  updated_at = "2026-05-17T00:00:00Z"
+  flow_history = @(
+    @{ date = "2026-05-15"; net_flow_usd = -290400000 }
+  )
+}
+$body = $payload | ConvertTo-Json -Depth 5 -Compress
+Invoke-RestMethod -Method Post -Uri "https://btcwindow.uk/api/admin/etf-flows" `
+  -Headers $headers -ContentType "application/json" -Body $body
+```
+
+- After updating, verify production with:
+
+```powershell
+Invoke-RestMethod "https://btcwindow.uk/api/etf" |
+  Select-Object latest_date, latest_net_flow_usd, source_label
+```
 
 ## Testing Notes
 

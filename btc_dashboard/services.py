@@ -1403,13 +1403,30 @@ def _get_etf_flow_from_manual_file(settings: Settings) -> dict[str, Any]:
 
 
 def update_manual_etf_flow_file(settings: Settings, data: dict[str, Any]) -> dict[str, Any]:
-    validated = _validate_manual_etf_update_payload(data)
+    validated = _merge_manual_etf_update_payload(settings.etf_flow_path, data)
     _write_manual_etf_json_atomic(settings.etf_flow_path, validated)
     clear_etf_cache()
     payload = _get_etf_flow_from_manual_file(settings)
     if payload["source"] == "fallback":
         raise ValueError(payload.get("error") or "manual ETF flow update failed")
     return payload
+
+
+def _merge_manual_etf_update_payload(path: Path, data: dict[str, Any]) -> dict[str, Any]:
+    current_history = []
+    if path.exists():
+        try:
+            current_history = _load_manual_etf_json(path).get("flow_history") or []
+        except (OSError, json.JSONDecodeError, TypeError):
+            current_history = []
+    merged = {
+        **data,
+        "flow_history": [
+            *(row for row in current_history if isinstance(row, dict)),
+            *(row for row in data.get("flow_history", []) if isinstance(row, dict)),
+        ],
+    }
+    return _validate_manual_etf_update_payload(merged)
 
 
 def _validate_manual_etf_update_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -1427,7 +1444,7 @@ def _validate_manual_etf_update_payload(data: dict[str, Any]) -> dict[str, Any]:
     if len(history) > 120:
         raise ValueError("ETF update flow_history must contain 120 rows or fewer")
 
-    rows = []
+    rows_by_date = {}
     for row in history:
         if not isinstance(row, dict):
             raise ValueError("ETF update row must be an object")
@@ -1444,9 +1461,9 @@ def _validate_manual_etf_update_payload(data: dict[str, Any]) -> dict[str, Any]:
         clean_row = {"date": date, "net_flow_usd": net_flow_usd}
         if "close_price" in row:
             clean_row["close_price"] = _first_number(row, ("close_price",)) or 0
-        rows.append(clean_row)
+        rows_by_date[date] = clean_row
 
-    normalized = _normalize_etf_payload(rows, "manual", allow_stale=True)
+    normalized = _normalize_etf_payload(list(rows_by_date.values()), "manual", allow_stale=True)
     return {
         "source": "manual",
         "updated_at": updated_at,

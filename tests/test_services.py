@@ -1458,7 +1458,7 @@ def test_get_etf_flow_updates_railway_volume_manual_file_when_bundled_is_newer(
     assert payload["latest_net_flow_usd"] == 131_300_000.0
 
 
-def test_update_manual_etf_flow_file_writes_payload_and_clears_cache(
+def test_update_manual_etf_flow_file_merges_payload_and_clears_cache(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -1492,7 +1492,47 @@ def test_update_manual_etf_flow_file_writes_payload_and_clears_cache(
     assert second["latest_date"] == "2026-05-16"
     assert get_etf_flow(settings)["latest_date"] == "2026-05-16"
     assert saved_data["flow_history"] == [
+        {"date": "2026-05-15", "net_flow_usd": -290_400_000.0, "close_price": 0},
         {"date": "2026-05-16", "net_flow_usd": 260_000_000.0, "close_price": 0},
+    ]
+
+
+def test_update_manual_etf_flow_file_replaces_existing_date(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 17, tzinfo=UTC),
+    )
+    settings = _settings(tmp_path, etf_flow_path=tmp_path / "etf_flows.json")
+    settings.etf_flow_path.write_text(
+        json.dumps({
+            "source": "manual",
+            "updated_at": "2026-05-15T00:00:00Z",
+            "flow_history": [
+                {"date": "2026-05-14", "net_flow_usd": 131_300_000},
+                {"date": "2026-05-15", "net_flow_usd": -1},
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    payload = update_manual_etf_flow_file(settings, {
+        "source": "manual",
+        "updated_at": "2026-05-17T00:00:00Z",
+        "flow_history": [{"date": "2026-05-15", "net_flow_usd": -290_400_000}],
+    })
+
+    saved_data = json.loads(settings.etf_flow_path.read_text(encoding="utf-8"))
+    assert payload["latest_date"] == "2026-05-15"
+    assert saved_data["flow_history"] == [
+        {"date": "2026-05-14", "net_flow_usd": 131_300_000.0, "close_price": 0},
+        {"date": "2026-05-15", "net_flow_usd": -290_400_000.0, "close_price": 0},
     ]
 
 
