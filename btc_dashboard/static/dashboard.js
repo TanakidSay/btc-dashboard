@@ -19,7 +19,7 @@ const sharedChartOptions = {
 
 async function fetchJson(url) {
     try {
-        const response = await fetch(url);
+        const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) throw new Error(`Request failed: ${response.status}`);
         return response.json();
     } catch (error) {
@@ -848,99 +848,6 @@ async function updateFeeRecommendation() {
 }
 
 // ── Refresh ───────────────────────────────────────────────
-function signalBadgeClass(status) {
-    const map = {
-        cheap: "bg-green-600 text-green-100",
-        low: "bg-green-600 text-green-100",
-        inflow: "bg-green-600 text-green-100",
-        ok: "bg-green-600 text-green-100",
-        medium: "bg-yellow-600 text-yellow-100",
-        warning: "bg-yellow-600 text-yellow-100",
-        outflow: "bg-red-700 text-red-100",
-        high: "bg-red-700 text-red-100",
-        neutral: "bg-gray-800 text-gray-300",
-    };
-    return map[status] || "bg-gray-800 text-gray-300";
-}
-
-function signalStatusLabel(status) {
-    const map = {
-        cheap: "Cheap",
-        low: "Low",
-        medium: "Medium",
-        high: "High",
-        inflow: "Inflow",
-        outflow: "Outflow",
-        warning: "Warning",
-        neutral: "Neutral",
-    };
-    return map[status] || "Neutral";
-}
-
-function signalByKey(data, key) {
-    return (data.signals || []).find((signal) => signal.key === key) || {
-        status: "neutral",
-        value: "N/A",
-        message: "Waiting for data",
-    };
-}
-
-function renderSignalTile(signal, ids) {
-    const status = signal.status || "neutral";
-    const statusEl = document.getElementById(ids.status);
-    const valueEl = document.getElementById(ids.value);
-    const messageEl = document.getElementById(ids.message);
-    if (statusEl) {
-        statusEl.textContent = signalStatusLabel(status);
-        statusEl.className = `rounded px-2 py-0.5 text-[11px] font-semibold ${signalBadgeClass(status)}`;
-    }
-    if (valueEl) valueEl.textContent = valueOrNA(signal.value);
-    if (messageEl) messageEl.textContent = signal.message || "Waiting for data";
-}
-
-function renderTodaySignals(data) {
-    const summary = document.getElementById("todaySignalsSummary");
-    const action = document.getElementById("todaySignalsAction");
-    const updated = document.getElementById("todaySignalsUpdated");
-    if (summary) summary.textContent = data.summary || "Waiting for data";
-    if (action) {
-        action.textContent = data.action || "Waiting for data";
-        action.className = `w-fit rounded px-3 py-1 text-xs font-semibold ${signalBadgeClass(data.status)}`;
-    }
-    if (updated) updated.textContent = `Updated: ${data.updated_at ? formatDateTime(data.updated_at) : "N/A"}`;
-
-    renderSignalTile(signalByKey(data, "cheapest_fee_window"), {
-        status: "signalFeeStatus",
-        value: "signalFeeValue",
-        message: "signalFeeMessage",
-    });
-    renderSignalTile(signalByKey(data, "network_stress"), {
-        status: "signalStressStatus",
-        value: "signalStressValue",
-        message: "signalStressMessage",
-    });
-    renderSignalTile(signalByKey(data, "etf_trend"), {
-        status: "signalEtfStatus",
-        value: "signalEtfValue",
-        message: "signalEtfMessage",
-    });
-}
-
-async function updateTodaySignals() {
-    try {
-        renderTodaySignals(await fetchJson("/api/signals"));
-    } catch (error) {
-        console.error("Failed to update today signals", error);
-        renderTodaySignals({
-            status: "neutral",
-            summary: "Waiting for data",
-            action: "Waiting for data",
-            updated_at: null,
-            signals: [],
-        });
-    }
-}
-
 async function refreshBtcPriceCard() {
     await updateBtcPriceCard();
 }
@@ -1011,14 +918,12 @@ async function initDashboard() {
         updateAlert(),
         updateSecurity(),
         updateFeeRecommendation(),
-        updateTodaySignals(),
         initDonationBox(),
     ]);
     updateBtcPriceCard();
     startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000);
     startRefreshJob("btc-price-chart", refreshPriceChart, 60000);
     startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000);
-    startRefreshJob("today-signals", updateTodaySignals, 60000);
     startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000);
     startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000);
     startRefreshJob("institutional", refreshInstitutionalMetrics, 60 * 60 * 1000);

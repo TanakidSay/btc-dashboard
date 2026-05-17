@@ -59,6 +59,8 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.after_request
     def add_security_headers(response):
+        if request.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")

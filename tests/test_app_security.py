@@ -36,6 +36,15 @@ def test_security_headers_are_added(monkeypatch, tmp_path) -> None:
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
 
+def test_api_responses_disable_browser_cache(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/signals")
+
+    assert response.headers["Cache-Control"] == "no-store, max-age=0"
+
+
 def test_basic_auth_blocks_dashboard_without_credentials(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(
@@ -367,26 +376,16 @@ def test_signals_policy_route(monkeypatch, tmp_path) -> None:
     assert body["daily_post_hour"] == 9
 
 
-def test_api_signals_returns_today_signal_payload(monkeypatch, tmp_path) -> None:
+def test_api_signals_returns_signal_engine_payload(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     monkeypatch.setattr(
-        "btc_dashboard.routes.get_today_signals",
-        lambda: {
-            "status": "ok",
-            "updated_at": "2026-05-17T00:00:00Z",
-            "summary": "Fees look calm while ETF demand is supportive.",
-            "action": "Good time to transfer",
-            "signals": [
-                {
-                    "key": "cheapest_fee_window",
-                    "label": "Cheapest Fee Window",
-                    "status": "cheap",
-                    "value": "3.0 sat/vB",
-                    "message": "Fees are below the recent average.",
-                    "action": "Good time to transfer",
-                }
-            ],
-            "ttl_seconds": 300,
+        "btc_dashboard.routes.latest_signals",
+        lambda settings: {
+            "signals": [],
+            "x_posting_enabled": False,
+            "cooldown_seconds": 3600,
+            "dashboard_url": "https://btcwindow.uk/",
+            "post_state": {"posted_key_count": 0, "last_normal_posted_at": 0},
         },
     )
     app = create_app(_settings(tmp_path))
@@ -395,26 +394,26 @@ def test_api_signals_returns_today_signal_payload(monkeypatch, tmp_path) -> None
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body["summary"] == "Fees look calm while ETF demand is supportive."
-    assert body["action"] == "Good time to transfer"
-    assert body["signals"][0]["key"] == "cheapest_fee_window"
+    assert body["signals"] == []
+    assert body["x_posting_enabled"] is False
+    assert body["cooldown_seconds"] == 3600
 
 
 def test_api_signals_returns_safe_fallback_on_error(monkeypatch, tmp_path) -> None:
-    def fail_signals():
+    def fail_signals(settings):
         raise RuntimeError("cache unavailable")
 
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
-    monkeypatch.setattr("btc_dashboard.routes.get_today_signals", fail_signals)
+    monkeypatch.setattr("btc_dashboard.routes.latest_signals", fail_signals)
     app = create_app(_settings(tmp_path))
 
     response = app.test_client().get("/api/signals")
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body["status"] == "neutral"
-    assert body["summary"] == "Waiting for data"
-    assert body["signals"][0]["value"] == "N/A"
+    assert body["signals"] == []
+    assert body["x_posting_enabled"] is False
+    assert body["error"] == "cache unavailable"
 
 
 def test_api_alert_returns_recent_alert_history(monkeypatch, tmp_path) -> None:
@@ -571,17 +570,16 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert 'startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000)' in js
     assert 'startRefreshJob("btc-price-chart", refreshPriceChart, 60000)' in js
     assert 'startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000)' in js
-    assert 'startRefreshJob("today-signals", updateTodaySignals, 60000)' in js
     assert 'startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000)' in js
     assert 'startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000)' in js
     assert 'startRefreshJob("institutional", refreshInstitutionalMetrics, 60 * 60 * 1000)' in js
     assert "supplyInsightCards" in html
     assert "etfFlowNote" in html
     assert "Effective liquid supply" in html
-    assert "Today Signals" in html
-    assert "Cheapest Fee Window" in html
     assert "Recent Alerts" in html
     assert "recentAlertBox" in html
+    assert "dashboard.js" in html
+    assert "20260517-2" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
     assert 'property="og:title"' in html
     assert 'name="twitter:card"' in html

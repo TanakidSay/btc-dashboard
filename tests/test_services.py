@@ -21,7 +21,6 @@ from btc_dashboard.services import (
     _parse_bitbo_etf_rows,
     _parse_farside_etf_rows_from_text,
     _parse_farside_latest_rows,
-    _set_persistent_cache,
     build_alerts,
     clear_cache,
     fee_spike_alert,
@@ -39,7 +38,6 @@ from btc_dashboard.services import (
     get_node_count_result,
     get_recent_whale_transactions,
     get_security_overview,
-    get_today_signals,
     get_viewer_analytics,
     get_viewer_stats,
     increment_total_views,
@@ -49,7 +47,6 @@ from btc_dashboard.services import (
     record_alert_history,
     record_view,
     save_total_views,
-    state,
     update_manual_etf_flow_file,
     whale_transaction_alert,
 )
@@ -92,81 +89,6 @@ def test_build_alerts_detects_rising_fee_spike() -> None:
             "threshold": "5.00",
         }
     ]
-
-
-def test_today_signals_returns_safe_fallback_when_data_missing(tmp_path) -> None:
-    _settings(tmp_path)
-    with state.lock:
-        state.fee_data = None
-
-    payload = get_today_signals()
-
-    assert payload["status"] == "neutral"
-    assert payload["summary"] == "Waiting for data"
-    assert payload["action"] == "Waiting for data"
-    assert payload["ttl_seconds"] == 300
-    assert [signal["status"] for signal in payload["signals"]] == ["neutral", "neutral", "neutral"]
-    assert [signal["value"] for signal in payload["signals"]] == ["N/A", "N/A", "N/A"]
-    assert all(signal["message"] == "Waiting for data" for signal in payload["signals"])
-
-
-def test_today_signals_does_not_cache_waiting_payload(tmp_path) -> None:
-    _settings(tmp_path)
-    with state.lock:
-        state.fee_data = None
-
-    first = get_today_signals()
-    with state.lock:
-        state.fee_data = pd.DataFrame({
-            "height": [1, 2],
-            "sat_per_vbyte": [8.0, 3.0],
-            "tx_count": [100, 120],
-        })
-
-    second = get_today_signals()
-
-    assert first["summary"] == "Waiting for data"
-    assert second["signals"][0]["value"] == "3.0 sat/vB"
-
-
-def test_today_signals_uses_cached_fee_security_and_etf_data(tmp_path) -> None:
-    _settings(tmp_path)
-    with state.lock:
-        state.fee_data = pd.DataFrame({
-            "height": [1, 2, 3],
-            "sat_per_vbyte": [8.0, 6.0, 3.0],
-            "tx_count": [100, 120, 140],
-        })
-    _set_persistent_cache(
-        "security_cache",
-        {
-            "double_spend": {"risk_level": "low"},
-            "attack_51": {"risk_level": "low"},
-            "invalid_blocks": {"risk_level": "low"},
-            "reorgs": {"risk_level": "low"},
-        },
-        "ok",
-    )
-    _set_persistent_cache(
-        "etf_cache",
-        {
-            "latest_date": "2026-05-15",
-            "latest_net_flow_usd": 125_000_000,
-            "is_fallback": False,
-            "source_label": "Manual",
-        },
-        "ok",
-    )
-
-    payload = get_today_signals()
-    signals = {signal["key"]: signal for signal in payload["signals"]}
-
-    assert payload["status"] == "ok"
-    assert signals["cheapest_fee_window"]["status"] == "cheap"
-    assert signals["cheapest_fee_window"]["value"] == "3.0 sat/vB"
-    assert signals["network_stress"]["status"] == "low"
-    assert signals["etf_trend"]["status"] == "inflow"
-    assert signals["etf_trend"]["value"] == "+$125.00M (2026-05-15)"
 
 
 def test_alert_history_records_recent_alerts_without_duplicates(tmp_path) -> None:

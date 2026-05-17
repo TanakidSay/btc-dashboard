@@ -17,7 +17,6 @@ from .services import (
     get_etf_flow,
     get_recent_whale_transactions,
     get_security_overview,
-    get_today_signals,
     get_viewer_analytics,
     get_viewer_stats,
     load_recent_alerts,
@@ -27,7 +26,7 @@ from .services import (
     state,
     update_manual_etf_flow_file,
 )
-from .signal_engine import pending_signal_status, signals_policy
+from .signal_engine import latest_signals, pending_signal_status, signals_policy
 from .x_poster import get_x_status, post_to_x
 
 api = Blueprint("api", __name__)
@@ -402,41 +401,15 @@ def api_alert():
 @api.route("/api/signals")
 def api_signals():
     try:
-        return jsonify(get_today_signals())
+        return jsonify(latest_signals(_settings()))
     except Exception as exc:
         current_app.logger.exception("/api/signals failed: %s", exc)
         return jsonify({
-            "status": "neutral",
-            "updated_at": _utc_now_iso(),
-            "summary": "Waiting for data",
-            "action": "Waiting for data",
-            "signals": [
-                {
-                    "key": "cheapest_fee_window",
-                    "label": "Cheapest Fee Window",
-                    "status": "neutral",
-                    "value": "N/A",
-                    "message": "Waiting for data",
-                    "action": "Waiting for data",
-                },
-                {
-                    "key": "network_stress",
-                    "label": "Network Stress",
-                    "status": "neutral",
-                    "value": "N/A",
-                    "message": "Waiting for data",
-                    "action": "Waiting for data",
-                },
-                {
-                    "key": "etf_trend",
-                    "label": "ETF Trend",
-                    "status": "neutral",
-                    "value": "N/A",
-                    "message": "Waiting for data",
-                    "action": "Waiting for data",
-                },
-            ],
-            "ttl_seconds": 300,
+            "signals": [],
+            "x_posting_enabled": False,
+            "cooldown_seconds": 3600,
+            "dashboard_url": "https://btcwindow.up.railway.app/",
+            "post_state": {"posted_key_count": 0, "last_normal_posted_at": 0, "last_post": None},
             "error": str(exc),
         })
 
