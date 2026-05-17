@@ -197,6 +197,15 @@ Viewer tracking notes:
 - Viewer analytics intentionally stores aggregate/privacy-preserving data rather
   than raw IP addresses.
 
+Time display notes:
+
+- Backend/API timestamps should remain UTC internally.
+- Frontend display should stay user-friendly and use the browser/user local
+  timezone for visible timestamps and chart labels.
+- Do not add `Timezone: UTC` labels to chart sections while frontend display is
+  local time; it is confusing for users.
+- Static metric cards should not have repeated timezone labels.
+
 Manual ETF update notes:
 
 - `POST /api/admin/etf-flows` updates `ETF_FLOW_FILE` without redeploying.

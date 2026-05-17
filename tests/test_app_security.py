@@ -501,18 +501,6 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Effective liquid supply" in html
 
 
-def test_frontend_adds_utc_labels_only_to_time_series_sections() -> None:
-    html = Path("btc_dashboard/templates/dashboard.html").read_text(encoding="utf-8")
-
-    assert html.count("Timezone: UTC") == 5
-    assert "ETF Flow History</h2>" in html
-    assert "BTC Price</h2>" in html
-    assert "Fee (sat/vB)</h2>" in html
-    assert "Transaction Count</h2>" in html
-    assert "Network Hashrate</h2>" in html
-    assert "text-[11px] font-medium text-gray-500" in html
-
-
 def test_frontend_includes_generational_wealth_branding_asset() -> None:
     html = Path("btc_dashboard/templates/dashboard.html").read_text(encoding="utf-8")
     asset = Path("btc_dashboard/static/generational-mascot.webp")
