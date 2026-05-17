@@ -150,6 +150,7 @@ Commonly relevant variables:
 - `VIEWER_STATS_FILE`
 - `VIEWER_ANALYTICS_FILE`
 - `ETF_FLOW_FILE`
+- `ETF_ADMIN_TOKEN`
 - `BTC_PRICE_BASELINE_FILE`
 - `CANONICAL_HOST`
 - `CANONICAL_REDIRECT_HOSTS`
@@ -164,6 +165,7 @@ VIEW_COUNTER_FILE=/data/view_counter.json
 VIEWER_STATS_FILE=/data/viewer_stats.json
 VIEWER_ANALYTICS_FILE=/data/viewer_analytics.json
 ETF_FLOW_FILE=/data/etf_flows.json
+ETF_ADMIN_TOKEN=<long-random-secret>
 BTC_PRICE_BASELINE_FILE=/data/btc_price_baseline.json
 CANONICAL_HOST=btcwindow.uk
 CANONICAL_REDIRECT_HOSTS=btcwindow.up.railway.app
@@ -194,6 +196,15 @@ Viewer tracking notes:
   browsers, countries, paths, recent events, and suppressed duplicate events.
 - Viewer analytics intentionally stores aggregate/privacy-preserving data rather
   than raw IP addresses.
+
+Manual ETF update notes:
+
+- `POST /api/admin/etf-flows` updates `ETF_FLOW_FILE` without redeploying.
+- It requires `Authorization: Bearer <ETF_ADMIN_TOKEN>`.
+- Keep `ETF_ADMIN_TOKEN` separate from dashboard auth tokens.
+- The endpoint is POST-only, validates the manual JSON payload, writes the file
+  atomically, and clears ETF cache after a successful update.
+- Do not expose this endpoint in the frontend.
 
 ## Testing Notes
 

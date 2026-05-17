@@ -240,6 +240,68 @@ def test_etf_route_returns_empty_strings_for_missing_timestamps(monkeypatch, tmp
     assert body["latest_date"] == ""
 
 
+def test_etf_admin_update_requires_admin_token(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, etf_admin_token="secret-token"))
+
+    response = app.test_client().post(
+        "/api/admin/etf-flows",
+        json={"source": "manual", "updated_at": "2026-05-17T00:00:00Z", "flow_history": []},
+    )
+
+    assert response.status_code == 401
+
+
+def test_etf_admin_update_uses_separate_token_when_dashboard_auth_enabled(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(
+        _settings(
+            tmp_path,
+            dashboard_api_token="dashboard-token",
+            etf_admin_token="secret-token",
+            etf_flow_path=tmp_path / "etf_flows.json",
+        ),
+    )
+
+    response = app.test_client().post(
+        "/api/admin/etf-flows",
+        headers={"Authorization": "Bearer secret-token"},
+        json={
+            "source": "manual",
+            "updated_at": "2026-05-17T00:00:00Z",
+            "flow_history": [{"date": "2026-05-15", "net_flow_usd": -290_400_000}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["ok"] is True
+    assert body["source"] == "manual"
+    assert body["latest_date"] == "2026-05-15"
+    assert body["latest_net_flow_usd"] == -290_400_000.0
+
+
+def test_etf_admin_update_rejects_invalid_payload(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, etf_admin_token="secret-token"))
+
+    response = app.test_client().post(
+        "/api/admin/etf-flows",
+        headers={"Authorization": "Bearer secret-token"},
+        json={
+            "source": "live",
+            "updated_at": "2026-05-17T00:00:00Z",
+            "flow_history": [{"date": "2026-05-15", "net_flow_usd": -290_400_000}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["ok"] is False
+
+
 def test_price_route_returns_change_fields(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     monkeypatch.setattr(

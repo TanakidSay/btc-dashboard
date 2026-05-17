@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from hmac import compare_digest
 
 import pandas as pd
 from flask import Blueprint, current_app, jsonify, render_template, request
@@ -21,6 +22,7 @@ from .services import (
     record_view,
     snapshot,
     state,
+    update_manual_etf_flow_file,
 )
 from .signal_engine import latest_signals, pending_signal_status, signals_policy
 from .x_poster import get_x_status, post_to_x
@@ -226,6 +228,46 @@ def api_etf():
             "status": "error",
             "error": str(exc),
         })
+
+
+@api.route("/api/admin/etf-flows", methods=["POST"])
+def api_admin_etf_flows():
+    settings = _settings()
+    if not _is_valid_etf_admin_request(settings):
+        current_app.logger.warning("unauthorized ETF admin update")
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return jsonify({"ok": False, "error": "Invalid JSON body"}), 400
+
+    try:
+        updated = update_manual_etf_flow_file(settings, payload)
+        return jsonify({
+            "ok": True,
+            "source": updated["source"],
+            "source_label": updated["source_label"],
+            "latest_date": updated["latest_date"],
+            "latest_net_flow_usd": updated["latest_net_flow_usd"],
+            "is_stale": updated["is_stale"],
+            "data_note": updated["data_note"],
+        })
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except OSError as exc:
+        current_app.logger.exception("ETF admin update failed: %s", exc)
+        return jsonify({"ok": False, "error": "ETF update write failed"}), 500
+
+
+def _is_valid_etf_admin_request(settings: Settings) -> bool:
+    if not settings.etf_admin_token:
+        return False
+    bearer_prefix = "Bearer "
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith(bearer_prefix):
+        return False
+    token = authorization.removeprefix(bearer_prefix).strip()
+    return compare_digest(token, settings.etf_admin_token)
 
 
 @api.route("/api/treasury")

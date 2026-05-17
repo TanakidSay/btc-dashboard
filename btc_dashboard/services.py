@@ -772,6 +772,12 @@ def clear_cache() -> None:
         _persistent_caches["security_cache"] = PersistentCache({})
 
 
+def clear_etf_cache() -> None:
+    with _persistent_cache_lock:
+        _persistent_cache_refreshing.discard("etf_cache")
+        _persistent_caches["etf_cache"] = PersistentCache(deepcopy(FALLBACK_ETF_FLOW))
+
+
 def _cached(key: str, settings: Settings, loader):
     return _cached_for(key, settings.cache_ttl_seconds, loader)
 
@@ -1394,6 +1400,74 @@ def _get_etf_flow_from_manual_file(settings: Settings) -> dict[str, Any]:
         fallback = deepcopy(FALLBACK_ETF_FLOW)
         fallback["error"] = str(exc)
         return fallback
+
+
+def update_manual_etf_flow_file(settings: Settings, data: dict[str, Any]) -> dict[str, Any]:
+    validated = _validate_manual_etf_update_payload(data)
+    _write_manual_etf_json_atomic(settings.etf_flow_path, validated)
+    clear_etf_cache()
+    payload = _get_etf_flow_from_manual_file(settings)
+    if payload["source"] == "fallback":
+        raise ValueError(payload.get("error") or "manual ETF flow update failed")
+    return payload
+
+
+def _validate_manual_etf_update_payload(data: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ValueError("ETF update payload must be an object")
+    if data.get("source") != "manual":
+        raise ValueError("ETF update source must be manual")
+
+    updated_at = str(data.get("updated_at") or "").strip()
+    _parse_iso_timestamp(updated_at)
+
+    history = data.get("flow_history")
+    if not isinstance(history, list) or not history:
+        raise ValueError("ETF update flow_history must be a non-empty list")
+    if len(history) > 120:
+        raise ValueError("ETF update flow_history must contain 120 rows or fewer")
+
+    rows = []
+    for row in history:
+        if not isinstance(row, dict):
+            raise ValueError("ETF update row must be an object")
+        unexpected_fields = set(row) - {"date", "net_flow_usd", "close_price"}
+        if unexpected_fields:
+            raise ValueError("ETF update row contains unsupported fields")
+        date = str(row.get("date") or "").strip()
+        if _parse_etf_date(date) is None:
+            raise ValueError(f"ETF update row has invalid date: {date}")
+        try:
+            net_flow_usd = float(row.get("net_flow_usd"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"ETF update row has invalid net_flow_usd for {date}") from exc
+        clean_row = {"date": date, "net_flow_usd": net_flow_usd}
+        if "close_price" in row:
+            clean_row["close_price"] = _first_number(row, ("close_price",)) or 0
+        rows.append(clean_row)
+
+    normalized = _normalize_etf_payload(rows, "manual", allow_stale=True)
+    return {
+        "source": "manual",
+        "updated_at": updated_at,
+        "flow_history": normalized["flow_history"],
+    }
+
+
+def _parse_iso_timestamp(value: str) -> datetime:
+    if not value:
+        raise ValueError("ETF update updated_at is required")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("ETF update updated_at must be an ISO timestamp") from exc
+
+
+def _write_manual_etf_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp")
+    _write_manual_etf_json(temp_path, data)
+    temp_path.replace(path)
 
 
 def _sync_manual_etf_file_if_needed(path: Path) -> None:

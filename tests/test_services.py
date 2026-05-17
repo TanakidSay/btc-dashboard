@@ -45,6 +45,7 @@ from btc_dashboard.services import (
     price_breakout_alert,
     record_view,
     save_total_views,
+    update_manual_etf_flow_file,
     whale_transaction_alert,
 )
 
@@ -1455,6 +1456,44 @@ def test_get_etf_flow_updates_railway_volume_manual_file_when_bundled_is_newer(
     assert payload["source"] == "manual"
     assert payload["latest_date"] == "2026-05-14"
     assert payload["latest_net_flow_usd"] == 131_300_000.0
+
+
+def test_update_manual_etf_flow_file_writes_payload_and_clears_cache(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 17, tzinfo=UTC),
+    )
+    settings = _settings(tmp_path, etf_flow_path=tmp_path / "etf_flows.json")
+    initial_payload = {
+        "source": "manual",
+        "updated_at": "2026-05-15T00:00:00Z",
+        "flow_history": [{"date": "2026-05-15", "net_flow_usd": -290_400_000}],
+    }
+    updated_payload = {
+        "source": "manual",
+        "updated_at": "2026-05-16T00:00:00Z",
+        "flow_history": [{"date": "2026-05-16", "net_flow_usd": 260_000_000}],
+    }
+
+    first = update_manual_etf_flow_file(settings, initial_payload)
+    cached = get_etf_flow(settings)
+    second = update_manual_etf_flow_file(settings, updated_payload)
+
+    saved_data = json.loads(settings.etf_flow_path.read_text(encoding="utf-8"))
+    assert first["latest_date"] == "2026-05-15"
+    assert cached["latest_date"] == "2026-05-15"
+    assert second["latest_date"] == "2026-05-16"
+    assert get_etf_flow(settings)["latest_date"] == "2026-05-16"
+    assert saved_data["flow_history"] == [
+        {"date": "2026-05-16", "net_flow_usd": 260_000_000.0, "close_price": 0},
+    ]
 
 
 def test_get_etf_flow_empty_manual_file_skips_to_farside_without_warning(

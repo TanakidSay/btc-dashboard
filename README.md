@@ -169,6 +169,7 @@ VIEWER_STATS_INITIAL_UNIQUE=0
 ETF_FLOW_FILE=data/etf_flows.json
 BTC_PRICE_BASELINE_FILE=data/btc_price_baseline.json
 ETF_FLOW_TTL_SECONDS=43200
+ETF_ADMIN_TOKEN=
 CANONICAL_HOST=btcwindow.uk
 CANONICAL_REDIRECT_HOSTS=btcwindow.up.railway.app
 ```
@@ -187,6 +188,12 @@ because ETF flow is daily market data, not a real-time price feed. The dashboard
 labels this data as `Manual`, not live data. `ETF_FLOW_TTL_SECONDS` controls
 backend ETF refresh cadence and is clamped to a one-hour minimum.
 
+`ETF_ADMIN_TOKEN` enables the write-only manual ETF update endpoint
+`POST /api/admin/etf-flows`. Keep it secret and separate from dashboard tokens.
+The endpoint validates the JSON payload, writes `ETF_FLOW_FILE` atomically, and
+clears the ETF cache so the dashboard can show updated manual ETF data without a
+redeploy.
+
 If live treasury sources are unavailable, the dashboard uses a clearly labeled
 checked public estimate instead of showing blank institutional cards.
 
@@ -203,6 +210,19 @@ generated URL from becoming the public canonical URL.
     {"date": "2026-05-08", "net_flow_usd": -45000000}
   ]
 }
+```
+
+Example manual ETF update from PowerShell:
+
+```powershell
+$headers = @{ Authorization = "Bearer $env:ETF_ADMIN_TOKEN" }
+$body = Get-Content .\data\etf_flows.json -Raw
+Invoke-RestMethod `
+  -Method Post `
+  -Uri https://btcwindow.uk/api/admin/etf-flows `
+  -Headers $headers `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
 Optional X posting variables for Railway:

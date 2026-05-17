@@ -71,6 +71,7 @@ class Settings:
     coinglass_api_key: str | None = None
     coingecko_demo_api_key: str | None = None
     sosovalue_api_key: str | None = None
+    etf_admin_token: str | None = None
     canonical_host: str = "btcwindow.uk"
     canonical_redirect_hosts: tuple[str, ...] = ("btcwindow.up.railway.app",)
 
@@ -157,6 +158,7 @@ class Settings:
             coinglass_api_key=os.getenv("COINGLASS_API_KEY") or None,
             coingecko_demo_api_key=os.getenv("COINGECKO_DEMO_API_KEY") or None,
             sosovalue_api_key=os.getenv("SOSOVALUE_API_KEY") or None,
+            etf_admin_token=os.getenv("ETF_ADMIN_TOKEN") or None,
             canonical_host=os.getenv("CANONICAL_HOST", "btcwindow.uk").strip(),
             canonical_redirect_hosts=_tuple_from_env(
                 "CANONICAL_REDIRECT_HOSTS",
