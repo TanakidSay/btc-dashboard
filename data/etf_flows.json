@@ -1,19 +1,76 @@
 {
   "source": "manual",
-  "updated_at": "2026-05-15T00:00:00Z",
+  "updated_at": "2026-05-17T00:00:00Z",
   "flow_history": [
-    {"date": "2026-04-28", "net_flow_usd": -89700000},
-    {"date": "2026-04-29", "net_flow_usd": -137600000},
-    {"date": "2026-04-30", "net_flow_usd": 23500000},
-    {"date": "2026-05-01", "net_flow_usd": 629800000},
-    {"date": "2026-05-04", "net_flow_usd": 532300000},
-    {"date": "2026-05-05", "net_flow_usd": 467300000},
-    {"date": "2026-05-06", "net_flow_usd": 46200000},
-    {"date": "2026-05-07", "net_flow_usd": -268500000},
-    {"date": "2026-05-08", "net_flow_usd": -145700000},
-    {"date": "2026-05-11", "net_flow_usd": 27200000},
-    {"date": "2026-05-12", "net_flow_usd": -233200000},
-    {"date": "2026-05-13", "net_flow_usd": -630400000},
-    {"date": "2026-05-14", "net_flow_usd": 131300000}
+    {
+      "date": "2026-04-28",
+      "net_flow_usd": -89700000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-04-29",
+      "net_flow_usd": -137600000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-04-30",
+      "net_flow_usd": 23500000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-01",
+      "net_flow_usd": 629800000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-04",
+      "net_flow_usd": 532300000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-05",
+      "net_flow_usd": 467300000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-06",
+      "net_flow_usd": 46200000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-07",
+      "net_flow_usd": -268500000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-08",
+      "net_flow_usd": -145700000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-11",
+      "net_flow_usd": 27200000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-12",
+      "net_flow_usd": -233200000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-13",
+      "net_flow_usd": -630400000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-14",
+      "net_flow_usd": 131300000.0,
+      "close_price": 0
+    },
+    {
+      "date": "2026-05-15",
+      "net_flow_usd": -290400000.0,
+      "close_price": 0
+    }
   ]
 }
