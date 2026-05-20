@@ -13,6 +13,7 @@ from btc_dashboard.services import (
     HASHRATE_TTL_SECONDS,
     NODE_COUNT_TTL_SECONDS,
     SECURITY_TTL_SECONDS,
+    TREASURY_TTL_SECONDS,
     _etf_date_is_recent,
     _extract_globalcoinguide_date,
     _extract_millions_flow,
@@ -862,12 +863,15 @@ def test_fee_data_cache_uses_thirty_second_cadence(monkeypatch, tmp_path) -> Non
     assert calls["best_hash"] == 2
 
 
-def test_get_btc_treasury_holdings_retries_before_success(monkeypatch, tmp_path) -> None:
+def test_get_btc_treasury_holdings_tries_next_provider_before_success(
+    monkeypatch,
+    tmp_path,
+) -> None:
     calls = {"count": 0}
 
     def fake_get(url: str, **kwargs) -> FakeResponse:
         calls["count"] += 1
-        if calls["count"] < 3:
+        if calls["count"] == 1:
             return FakeResponse(status_code=503)
         return FakeResponse({
             "total_holdings": 123456.78,
@@ -886,9 +890,10 @@ def test_get_btc_treasury_holdings_retries_before_success(monkeypatch, tmp_path)
 
     payload = get_btc_treasury_holdings(_settings(tmp_path, cache_ttl_seconds=0))
 
-    assert calls["count"] == 3
+    assert calls["count"] == 2
     assert payload["status"] == "ok"
-    assert payload["source"] == "coingecko-public-treasury"
+    assert payload["source"] == "coingecko-company-treasury"
+    assert payload["source_label"] == "CoinGecko | Live"
     assert payload["updated_at"] is not None
     assert payload["error"] == ""
     assert payload["top_holders"][0]["name"] == "Strategy"
@@ -934,7 +939,13 @@ def test_get_btc_treasury_holdings_preserves_last_successful_value(monkeypatch, 
     assert second["treasury_dominance_percent"] == first["treasury_dominance_percent"]
     assert second["top_holders"] == first["top_holders"]
     assert second["updated_at"] == first["updated_at"]
+    assert second["source_label"] == "CoinGecko | Stale"
+    assert second["data_note"] == "Treasury data is cached because the live source is unavailable."
     assert "coingecko-public-treasury" in second["error"]
+
+
+def test_treasury_ttl_is_twenty_four_hours() -> None:
+    assert TREASURY_TTL_SECONDS == 24 * 60 * 60
 
 
 def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp_path) -> None:

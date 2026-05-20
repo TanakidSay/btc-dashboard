@@ -54,6 +54,7 @@ FEE_MEMPOOL_TTL_SECONDS = 30
 HASHRATE_TTL_SECONDS = 10 * 60
 NODE_COUNT_TTL_SECONDS = 30 * 60
 INSTITUTIONAL_TTL_SECONDS = 60 * 60
+TREASURY_TTL_SECONDS = 24 * 60 * 60
 SECURITY_TTL_SECONDS = 30 * 60
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
@@ -129,9 +130,11 @@ FALLBACK_BTC_TREASURY = {
     "treasury_dominance_percent": "N/A",
     "top_holders": [],
     "source": "fallback",
+    "source_label": "Treasury unavailable",
     "status": "error",
     "updated_at": None,
     "error": "",
+    "data_note": "Treasury data is unavailable.",
 }
 ESTIMATED_BTC_TREASURY = {
     "total_btc_held": 1_229_927,
@@ -199,6 +202,7 @@ ESTIMATED_BTC_TREASURY = {
         },
     ],
     "source": "coingecko-treasury-estimate",
+    "source_label": "CoinGecko estimate",
     "status": "fallback",
     "updated_at": "2026-05-10T00:00:00Z",
     "error": "Live treasury source unavailable; using checked public estimate data",
@@ -1965,7 +1969,7 @@ def _parse_farside_number(value: str) -> float | None:
 def get_btc_treasury_holdings(settings: Settings) -> dict[str, Any]:
     payload = _cached_resource(
         "treasury_cache",
-        INSTITUTIONAL_TTL_SECONDS,
+        TREASURY_TTL_SECONDS,
         lambda: _get_btc_treasury_with_fallback(settings),
         "[CACHE] Treasury refreshed",
         "[CACHE] Treasury fallback used",
@@ -1977,6 +1981,9 @@ def get_btc_treasury_holdings(settings: Settings) -> dict[str, Any]:
         "top_holders": deepcopy(payload.get("top_holders", [])),
         "status": payload.get("status", "ok"),
         "updated_at": payload.get("updated_at"),
+        "source": payload.get("source"),
+        "source_label": payload.get("source_label"),
+        "data_note": payload.get("data_note"),
     }, payload.get("status", "ok"))
     return payload
 
@@ -1994,7 +2001,7 @@ def _get_btc_treasury_with_fallback(settings: Settings) -> dict[str, Any]:
 
     for source_name, url in providers:
         try:
-            data = _get_json_with_headers_retry(url, settings, headers, attempts=3)
+            data = _get_json_with_headers_retry(url, settings, headers, attempts=1)
             payload = _normalize_treasury_payload(data, source_name)
             if _treasury_payload_is_valid(payload):
                 return _remember_successful_treasury(payload)
@@ -2009,6 +2016,8 @@ def _get_btc_treasury_with_fallback(settings: Settings) -> dict[str, Any]:
             stale = deepcopy(_last_successful_treasury)
             stale["status"] = "stale"
             stale["error"] = error
+            stale["source_label"] = _treasury_source_label(stale.get("source"), "stale")
+            stale["data_note"] = "Treasury data is cached because the live source is unavailable."
             return stale
     return _estimated_btc_treasury(error)
 
@@ -2057,10 +2066,35 @@ def _treasury_payload(
         "treasury_dominance_percent": treasury_dominance_percent,
         "top_holders": top_holders,
         "source": source,
+        "source_label": _treasury_source_label(source, status),
         "status": status,
         "updated_at": updated_at,
         "error": error,
+        "data_note": _treasury_data_note(source, status),
     }
+
+
+def _treasury_source_label(source: Any, status: str) -> str:
+    source_text = str(source or "unknown")
+    if status == "stale":
+        return "CoinGecko | Stale" if source_text.startswith("coingecko") else "Cached | Stale"
+    if status == "fallback":
+        return "CoinGecko estimate"
+    if source_text.startswith("coingecko"):
+        return "CoinGecko | Live"
+    if source_text == "fallback":
+        return "Treasury unavailable"
+    return source_text
+
+
+def _treasury_data_note(source: Any, status: str) -> str:
+    if status == "stale":
+        return "Treasury data is cached because the live source is unavailable."
+    if status == "fallback":
+        return "Treasury data is using checked public estimate data from CoinGecko."
+    if str(source or "").startswith("coingecko"):
+        return "Treasury data loaded from CoinGecko public treasury data."
+    return "Treasury data source is limited."
 
 
 def _treasury_payload_is_valid(payload: dict[str, Any]) -> bool:

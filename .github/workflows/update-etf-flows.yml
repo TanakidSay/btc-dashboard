@@ -1,0 +1,36 @@
+name: Update ETF flows
+
+on:
+  schedule:
+    # ETF flow rows, especially IBIT/BlackRock, are normally available around
+    # 7:00 AM Bangkok time. Run at 8:30 AM Bangkok time (01:30 UTC),
+    # Tuesday-Saturday, so the previous US trading day has time to appear before
+    # we update the manual file.
+    - cron: "30 1 * * 2-6"
+  workflow_dispatch:
+
+jobs:
+  update-etf-flows:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BTCWINDOW_BASE_URL: ${{ vars.BTCWINDOW_BASE_URL || 'https://btcwindow.uk' }}
+      ETF_ADMIN_TOKEN: ${{ secrets.ETF_ADMIN_TOKEN }}
+      COINGLASS_API_KEY: ${{ secrets.COINGLASS_API_KEY }}
+      SOSOVALUE_API_KEY: ${{ secrets.SOSOVALUE_API_KEY }}
+      REQUEST_TIMEOUT_SECONDS: "20"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - name: Update production ETF flow data
+        run: python scripts/update_etf_flows.py

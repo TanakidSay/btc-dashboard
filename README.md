@@ -194,8 +194,14 @@ The endpoint validates the JSON payload, writes `ETF_FLOW_FILE` atomically, and
 clears the ETF cache so the dashboard can show updated manual ETF data without a
 redeploy.
 
-If live treasury sources are unavailable, the dashboard uses a clearly labeled
-checked public estimate instead of showing blank institutional cards.
+Treasury data is cached for 24 hours because public treasury holdings are a
+slow-moving institutional signal, not a realtime feed. If CoinGecko returns a
+rate limit or other source error, the dashboard keeps serving cached/stale
+treasury data when available instead of blanking Institutional Insight. The UI
+labels the treasury source clearly, for example `Source: CoinGecko | Stale` with
+a last-checked timestamp. If no cached live value exists yet, the dashboard uses
+a clearly labeled checked public estimate instead of showing blank institutional
+cards.
 
 `CANONICAL_HOST` is the primary dashboard domain. Requests from any comma-separated
 host in `CANONICAL_REDIRECT_HOSTS` redirect to it, which keeps the Railway
@@ -224,6 +230,16 @@ Invoke-RestMethod `
   -ContentType "application/json" `
   -Body $body
 ```
+
+Automatic ETF updates can run from GitHub Actions with
+`.github/workflows/update-etf-flows.yml`. Add the repository secret
+`ETF_ADMIN_TOKEN` with the same value as Railway, then run the workflow manually
+once from GitHub Actions. The scheduled job runs Tuesday-Saturday at 01:30 UTC
+or 8:30 AM Bangkok time, after the previous US trading day's ETF flow rows are
+usually available, then fetches live/public ETF flow rows from the GitHub runner and posts them to
+`/api/admin/etf-flows`. Optional repository secrets `COINGLASS_API_KEY` and
+`SOSOVALUE_API_KEY` are used when present. The updater fails rather than posting
+fallback or fabricated data if no usable live ETF rows are available.
 
 Optional X posting variables for Railway:
 

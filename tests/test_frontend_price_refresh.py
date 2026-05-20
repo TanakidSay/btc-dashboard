@@ -66,3 +66,14 @@ def test_frontend_renders_treasury_holders_without_confidence_label() -> None:
 
     assert "holder.confidence" not in dashboard_js
     assert "holder.source_label" not in dashboard_js
+
+
+def test_frontend_renders_treasury_source_and_last_checked() -> None:
+    dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+    dashboard_html = (ROOT / "btc_dashboard/templates/dashboard.html").read_text(
+        encoding="utf-8",
+    )
+
+    assert "treasurySource" in dashboard_html
+    assert "treasuryData.source_label" in dashboard_js
+    assert "Last checked:" in dashboard_js

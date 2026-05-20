@@ -274,6 +274,46 @@ Invoke-RestMethod "https://btcwindow.uk/api/etf" |
 ((Invoke-RestMethod "https://btcwindow.uk/api/etf").flow_history).Count
 ```
 
+Automatic ETF update notes:
+
+- `.github/workflows/update-etf-flows.yml` runs the ETF updater Tuesday-Saturday
+  at `01:30 UTC` / `8:30 AM Bangkok time`, because IBIT/BlackRock ETF flow rows
+  are normally available around `7:00 AM Bangkok time`; this gives the updater a
+  90-minute buffer before posting to the manual ETF endpoint.
+- The workflow runs `python scripts/update_etf_flows.py`.
+- Required GitHub repository secret: `ETF_ADMIN_TOKEN`. Use the same value as
+  Railway `ETF_ADMIN_TOKEN`.
+- Optional GitHub repository variable: `BTCWINDOW_BASE_URL`; default is
+  `https://btcwindow.uk`.
+- Optional GitHub repository secrets: `COINGLASS_API_KEY`,
+  `SOSOVALUE_API_KEY`.
+- The updater fetches live/public ETF rows from the GitHub runner, converts them
+  to the manual admin payload, and posts to `/api/admin/etf-flows`.
+- The updater intentionally fails instead of posting fallback estimates,
+  manual data, or fabricated live data if no usable live rows are available.
+- The script checks current production `/api/etf` first and skips the admin POST
+  when the latest date is already current unless `--force` is used.
+- Manual workflow run: GitHub repository -> Actions -> `Update ETF flows` ->
+  `Run workflow`.
+- Local dry run:
+
+```powershell
+py -3.12 -B scripts/update_etf_flows.py --dry-run
+```
+
+Treasury data notes:
+
+- Treasury BTC holdings are slow-moving institutional data, not a realtime feed.
+- Backend treasury cache TTL is 24 hours to reduce CoinGecko rate-limit pressure.
+- The treasury loader tries CoinGecko public/company endpoints once each, then
+  uses cached/stale data if CoinGecko returns 429 or another source error.
+- The frontend must show a clear treasury source label such as
+  `Source: CoinGecko | Live` or `Source: CoinGecko | Stale` plus `Last checked`.
+- Institutional Insight may use cached/stale treasury data because it is a
+  broad institutional context signal, not an intraday trading signal.
+- A manual treasury JSON fallback similar to `ETF_FLOW_FILE` is a valid future
+  hardening step, but it is not required for the current MVP.
+
 ## Testing Notes
 
 Choose tests based on the area changed:

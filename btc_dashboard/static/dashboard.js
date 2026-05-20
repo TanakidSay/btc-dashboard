@@ -543,6 +543,9 @@ function renderInstitutionalCards(etfData, treasuryData, priceData) {
 
     document.getElementById("treasuryBtcHeld").innerText = formatBtc(valueOrNA(treasuryData.total_btc_held));
     document.getElementById("treasuryDominance").innerText = `Dominance: ${formatPercent(valueOrNA(treasuryData.treasury_dominance_percent))}`;
+    const treasurySource = treasuryData.source_label ?? treasuryData.source ?? "unknown";
+    const treasuryChecked = treasuryData.updated_at ? ` | Last checked: ${formatDateTime(treasuryData.updated_at)}` : "";
+    document.getElementById("treasurySource").innerText = `Source: ${treasurySource}${treasuryChecked}`;
     document.getElementById("institutionalInsight").innerText = institutionalInsight(etfData, treasuryData, priceData);
 
     const holders = treasuryData.top_holders ?? [];
