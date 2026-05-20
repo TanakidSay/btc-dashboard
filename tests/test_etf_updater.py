@@ -93,3 +93,42 @@ def test_post_admin_payload_strips_control_characters(monkeypatch) -> None:
     assert result["ok"] is True
     assert captured["url"] == "https://btcwindow.uk/api/admin/etf-flows"
     assert captured["headers"] == {"Authorization": "Bearer secret-token"}
+
+
+def test_main_continues_when_current_etf_check_is_blocked(monkeypatch, capsys) -> None:
+    posted = {}
+
+    monkeypatch.setattr(update_etf_flows.Settings, "from_env", lambda: object())
+    monkeypatch.setattr(
+        update_etf_flows,
+        "fetch_live_etf_flow",
+        lambda settings: {
+            "source": "bitbo",
+            "latest_date": "2026-05-18",
+            "flow_history": [{"date": "2026-05-18", "net_flow_usd": 123_000_000}],
+        },
+    )
+
+    def fail_current_check(base_url: str, timeout: int) -> str:
+        raise update_etf_flows.requests.HTTPError("403 Client Error")
+
+    def fake_post_admin(base_url: str, token: str, payload: dict, timeout: int) -> dict:
+        posted.update({"base_url": base_url, "payload": payload})
+        return {
+            "ok": True,
+            "latest_date": "2026-05-18",
+            "latest_net_flow_usd": 123_000_000,
+            "source_label": "Manual",
+        }
+
+    monkeypatch.setattr(update_etf_flows, "get_current_latest_date", fail_current_check)
+    monkeypatch.setattr(update_etf_flows, "post_admin_payload", fake_post_admin)
+    monkeypatch.setenv("ETF_ADMIN_TOKEN", "secret-token")
+
+    assert update_etf_flows.main([]) == 0
+
+    assert posted["base_url"] == "https://btcwindow.up.railway.app"
+    assert posted["payload"]["flow_history"] == [
+        {"date": "2026-05-18", "net_flow_usd": 123_000_000.0},
+    ]
+    assert "Current ETF check failed; continuing" in capsys.readouterr().err

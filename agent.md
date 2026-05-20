@@ -284,7 +284,8 @@ Automatic ETF update notes:
 - Required GitHub repository secret: `ETF_ADMIN_TOKEN`. Use the same value as
   Railway `ETF_ADMIN_TOKEN`.
 - Optional GitHub repository variable: `BTCWINDOW_BASE_URL`; default is
-  `https://btcwindow.uk`.
+  `https://btcwindow.up.railway.app` so GitHub Actions can bypass Cloudflare
+  bot checks on the public domain for the admin update.
 - Optional GitHub repository secrets: `COINGLASS_API_KEY`,
   `SOSOVALUE_API_KEY`.
 - The updater fetches live/public ETF rows from the GitHub runner, converts them
@@ -292,7 +293,9 @@ Automatic ETF update notes:
 - The updater intentionally fails instead of posting fallback estimates,
   manual data, or fabricated live data if no usable live rows are available.
 - The script checks current production `/api/etf` first and skips the admin POST
-  when the latest date is already current unless `--force` is used.
+  when the latest date is already current unless `--force` is used. If that
+  read-only check is blocked, the script continues to the admin POST instead of
+  failing early.
 - Manual workflow run: GitHub repository -> Actions -> `Update ETF flows` ->
   `Run workflow`.
 - Local dry run:

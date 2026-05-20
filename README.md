@@ -239,7 +239,9 @@ or 8:30 AM Bangkok time, after the previous US trading day's ETF flow rows are
 usually available, then fetches live/public ETF flow rows from the GitHub runner and posts them to
 `/api/admin/etf-flows`. Optional repository secrets `COINGLASS_API_KEY` and
 `SOSOVALUE_API_KEY` are used when present. The updater fails rather than posting
-fallback or fabricated data if no usable live ETF rows are available.
+fallback or fabricated data if no usable live ETF rows are available. The
+workflow defaults to the Railway generated domain for admin updates so
+Cloudflare bot checks on the public domain do not block the GitHub runner.
 
 Optional X posting variables for Railway:
 

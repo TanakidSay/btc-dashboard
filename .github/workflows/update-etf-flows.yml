@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
     env:
-      BTCWINDOW_BASE_URL: ${{ vars.BTCWINDOW_BASE_URL || 'https://btcwindow.uk' }}
+      BTCWINDOW_BASE_URL: ${{ vars.BTCWINDOW_BASE_URL || 'https://btcwindow.up.railway.app' }}
       ETF_ADMIN_TOKEN: ${{ secrets.ETF_ADMIN_TOKEN }}
       COINGLASS_API_KEY: ${{ secrets.COINGLASS_API_KEY }}
       SOSOVALUE_API_KEY: ${{ secrets.SOSOVALUE_API_KEY }}

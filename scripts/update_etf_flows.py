@@ -12,7 +12,7 @@ import requests
 from btc_dashboard import services
 from btc_dashboard.config import Settings
 
-DEFAULT_BASE_URL = "https://btcwindow.uk"
+DEFAULT_BASE_URL = "https://btcwindow.up.railway.app"
 ADMIN_ETF_PATH = "/api/admin/etf-flows"
 
 LIVE_SOURCE_LOADERS = (
@@ -93,7 +93,7 @@ def build_manual_payload(
     }
 
 
-def get_current_latest_date(base_url: str, timeout: int) -> str:
+def get_current_latest_date(base_url: str, timeout: int) -> str | None:
     response = requests.get(f"{base_url.rstrip('/')}/api/etf", timeout=timeout)
     response.raise_for_status()
     data = response.json()
@@ -141,7 +141,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     settings = Settings.from_env()
     live_payload = fetch_live_etf_flow(settings)
     admin_payload = build_manual_payload(live_payload)
@@ -151,10 +151,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(admin_payload, indent=2))
         return 0
 
-    current_latest_date = get_current_latest_date(args.base_url, args.timeout)
-    if current_latest_date == latest_date and not args.force:
-        print(f"ETF flow already up to date at {latest_date}; skipping admin update.")
-        return 0
+    try:
+        current_latest_date = get_current_latest_date(args.base_url, args.timeout)
+        if current_latest_date == latest_date and not args.force:
+            print(f"ETF flow already up to date at {latest_date}; skipping admin update.")
+            return 0
+    except requests.RequestException as exc:
+        print(f"Current ETF check failed; continuing with admin update: {exc}", file=sys.stderr)
 
     result = post_admin_payload(
         args.base_url,
