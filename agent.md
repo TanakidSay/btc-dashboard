@@ -187,6 +187,9 @@ CANONICAL_REDIRECT_HOSTS=btcwindow.up.railway.app
 - Production is currently fronted by Cloudflare. Cloudflare should cache static
   assets under `/static/*` only; do not cache `/api/*` because price, ETF, and
   viewer metrics must remain fresh.
+- When changing `btc_dashboard/static/dashboard.js`, bump the `v=` cache-buster
+  in `btc_dashboard/templates/dashboard.html`; otherwise Cloudflare/browser
+  static caching can serve old JavaScript while new HTML is already deployed.
 - Do not weaken CSP or other security headers unless the reason is clear and
   covered by tests.
 
