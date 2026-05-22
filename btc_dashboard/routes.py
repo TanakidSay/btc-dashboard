@@ -15,6 +15,7 @@ from .services import (
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
     get_etf_flow,
+    get_fear_greed_index,
     get_recent_whale_transactions,
     get_security_overview,
     get_viewer_analytics,
@@ -285,6 +286,25 @@ def api_treasury():
             "source": "fallback",
             "status": "error",
             "updated_at": None,
+            "error": str(exc),
+        })
+
+
+@api.route("/api/fear-greed")
+def api_fear_greed():
+    try:
+        return jsonify(get_fear_greed_index(_settings()))
+    except Exception as exc:
+        current_app.logger.exception("/api/fear-greed failed: %s", exc)
+        return jsonify({
+            "value": "N/A",
+            "classification": "N/A",
+            "source": "alternative.me",
+            "source_label": "Alternative.me",
+            "status": "error",
+            "updated_at": "",
+            "data_timestamp": "",
+            "data_note": "Fear & Greed data is unavailable.",
             "error": str(exc),
         })
 

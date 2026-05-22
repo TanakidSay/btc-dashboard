@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -53,6 +54,27 @@ def test_fetch_live_etf_flow_skips_missing_key_and_fallback(monkeypatch) -> None
     assert payload["latest_date"] == "2026-05-18"
 
 
+def test_fetch_live_etf_flow_rejects_rows_older_than_expected(monkeypatch) -> None:
+    settings = SimpleNamespace(sosovalue_api_key=None, coinglass_api_key=None)
+
+    for _, loader_name, _ in update_etf_flows.LIVE_SOURCE_LOADERS:
+        monkeypatch.setattr(
+            update_etf_flows.services,
+            loader_name,
+            lambda settings: {
+                "source": "bitbo",
+                "latest_date": "2026-05-20",
+                "flow_history": [{"date": "2026-05-20", "net_flow_usd": 0}],
+            },
+        )
+
+    with pytest.raises(update_etf_flows.EtfUpdateError, match="older than expected 2026-05-21"):
+        update_etf_flows.fetch_live_etf_flow(
+            settings,  # type: ignore[arg-type]
+            minimum_latest_date=datetime(2026, 5, 21, tzinfo=UTC).date(),
+        )
+
+
 def test_fetch_live_etf_flow_rejects_all_fallback_sources(monkeypatch) -> None:
     settings = SimpleNamespace(sosovalue_api_key=None, coinglass_api_key=None)
 
@@ -99,15 +121,14 @@ def test_main_continues_when_current_etf_check_is_blocked(monkeypatch, capsys) -
     posted = {}
 
     monkeypatch.setattr(update_etf_flows.Settings, "from_env", lambda: object())
-    monkeypatch.setattr(
-        update_etf_flows,
-        "fetch_live_etf_flow",
-        lambda settings: {
+    def fake_fetch_live_etf_flow(settings, *, minimum_latest_date=None):
+        return {
             "source": "bitbo",
             "latest_date": "2026-05-18",
             "flow_history": [{"date": "2026-05-18", "net_flow_usd": 123_000_000}],
-        },
-    )
+        }
+
+    monkeypatch.setattr(update_etf_flows, "fetch_live_etf_flow", fake_fetch_live_etf_flow)
 
     def fail_current_check(base_url: str, timeout: int) -> str:
         raise update_etf_flows.requests.HTTPError("403 Client Error")
@@ -125,10 +146,22 @@ def test_main_continues_when_current_etf_check_is_blocked(monkeypatch, capsys) -
     monkeypatch.setattr(update_etf_flows, "post_admin_payload", fake_post_admin)
     monkeypatch.setenv("ETF_ADMIN_TOKEN", "secret-token")
 
-    assert update_etf_flows.main([]) == 0
+    assert update_etf_flows.main(["--expected-date", "2026-05-18"]) == 0
 
     assert posted["base_url"] == "https://btcwindow.up.railway.app"
     assert posted["payload"]["flow_history"] == [
         {"date": "2026-05-18", "net_flow_usd": 123_000_000.0},
     ]
     assert "Current ETF check failed; continuing" in capsys.readouterr().err
+
+
+def test_expected_previous_us_trading_date_uses_bangkok_date() -> None:
+    assert update_etf_flows.expected_previous_us_trading_date(
+        datetime(2026, 5, 22, 1, 30, tzinfo=UTC),
+    ).isoformat() == "2026-05-21"
+
+
+def test_expected_previous_us_trading_date_skips_weekend() -> None:
+    assert update_etf_flows.expected_previous_us_trading_date(
+        datetime(2026, 5, 25, 1, 30, tzinfo=UTC),
+    ).isoformat() == "2026-05-22"

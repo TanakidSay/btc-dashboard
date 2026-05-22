@@ -497,7 +497,52 @@ async function updateViewers() {
 // Institutional metrics
 async function fetchEtfFlow() { return fetchJson("/api/etf"); }
 async function fetchTreasury() { return fetchJson("/api/treasury"); }
+async function fetchFearGreed() { return fetchJson("/api/fear-greed"); }
 async function fetchSupplyOwnership() { return fetchJson("/api/ownership"); }
+
+function fearGreedClass(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "text-gray-300";
+    if (numeric <= 24) return "text-red-400";
+    if (numeric <= 49) return "text-amber-300";
+    if (numeric <= 74) return "text-green-300";
+    return "text-green-400";
+}
+
+function renderFearGreed(data) {
+    const value = valueOrNA(data?.value);
+    const classification = valueOrNA(data?.classification);
+    const source = data?.source_label ?? data?.source ?? "Alternative.me";
+    const timestamp = data?.data_timestamp ? ` | Data: ${formatDateTime(data.data_timestamp)}` : "";
+    const status = data?.status === "stale" ? "Stale" : data?.status === "ok" ? "Daily" : "N/A";
+    const valueEl = document.getElementById("fearGreedValue");
+    const labelEl = document.getElementById("fearGreedLabel");
+    const sourceEl = document.getElementById("fearGreedSource");
+    const statusEl = document.getElementById("fearGreedStatus");
+    if (valueEl) {
+        valueEl.textContent = value;
+        valueEl.className = `mt-2 text-3xl font-bold ${fearGreedClass(value)}`;
+    }
+    if (labelEl) labelEl.textContent = classification;
+    if (sourceEl) sourceEl.textContent = `Source: ${source}${timestamp}`;
+    if (statusEl) {
+        statusEl.textContent = status;
+        statusEl.className = data?.status === "ok"
+            ? "rounded bg-amber-700/70 px-2 py-1 text-xs font-semibold text-amber-100"
+            : data?.status === "stale"
+            ? "rounded bg-gray-700 px-2 py-1 text-xs font-semibold text-gray-200"
+            : "rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-300";
+    }
+}
+
+async function updateFearGreed() {
+    try {
+        renderFearGreed(await fetchFearGreed());
+    } catch (error) {
+        console.error("Failed to update Fear & Greed data", error);
+        renderFearGreed({ value: "N/A", classification: "N/A", source_label: "Alternative.me", status: "error" });
+    }
+}
 
 function institutionalInsight(etfData, treasuryData, priceData) {
     const prices = priceData?.history ?? [];
@@ -887,6 +932,10 @@ async function refreshInstitutionalMetrics() {
     ]);
 }
 
+async function refreshFearGreed() {
+    await updateFearGreed();
+}
+
 function startRefreshJob(name, task, intervalMs) {
     if (refreshJobs.has(name)) {
         console.debug(`refresh skipped ${name}: already scheduled`);
@@ -921,6 +970,7 @@ async function initDashboard() {
         updateAlert(),
         updateSecurity(),
         updateFeeRecommendation(),
+        updateFearGreed(),
         initDonationBox(),
     ]);
     updateBtcPriceCard();
@@ -930,6 +980,7 @@ async function initDashboard() {
     startRefreshJob("hashrate", refreshHashrateMetrics, 10 * 60 * 1000);
     startRefreshJob("node-count", refreshNodeMetrics, 30 * 60 * 1000);
     startRefreshJob("institutional", refreshInstitutionalMetrics, 60 * 60 * 1000);
+    startRefreshJob("fear-greed", refreshFearGreed, 60 * 60 * 1000);
 }
 
 document.addEventListener("DOMContentLoaded", () => {

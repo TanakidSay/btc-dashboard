@@ -55,6 +55,7 @@ HASHRATE_TTL_SECONDS = 10 * 60
 NODE_COUNT_TTL_SECONDS = 30 * 60
 INSTITUTIONAL_TTL_SECONDS = 60 * 60
 TREASURY_TTL_SECONDS = 24 * 60 * 60
+FEAR_GREED_TTL_SECONDS = 24 * 60 * 60
 SECURITY_TTL_SECONDS = 30 * 60
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
@@ -66,6 +67,7 @@ FARSIDE_BTC_ETF_LATEST_URL = "https://farside.co.uk/btc/"
 BITBO_BTC_ETF_FLOW_URL = "https://bitbo.io/treasuries/etf-flows/"
 WALLETPILOT_BTC_ETF_URL = "https://www.walletpilot.com/bitcoin-tracker/etfs"
 GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flows"
+ALTERNATIVE_FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1&format=json"
 BUNDLED_ETF_FLOW_PATH = BASE_DIR / "data/etf_flows.json"
 COINGECKO_TREASURY_URLS = (
     "https://api.coingecko.com/api/v3/entities/public_treasury/bitcoin",
@@ -135,6 +137,17 @@ FALLBACK_BTC_TREASURY = {
     "updated_at": None,
     "error": "",
     "data_note": "Treasury data is unavailable.",
+}
+FALLBACK_FEAR_GREED = {
+    "value": "N/A",
+    "classification": "N/A",
+    "source": "alternative.me",
+    "source_label": "Alternative.me",
+    "status": "error",
+    "updated_at": "",
+    "data_timestamp": "",
+    "data_note": "Fear & Greed data is unavailable.",
+    "error": "",
 }
 ESTIMATED_BTC_TREASURY = {
     "total_btc_held": 1_229_927,
@@ -316,6 +329,7 @@ _persistent_caches: dict[str, PersistentCache] = {
     "ownership_cache": PersistentCache(deepcopy(FALLBACK_SUPPLY_OWNERSHIP)),
     "institutional_cache": PersistentCache({}),
     "etf_cache": PersistentCache(deepcopy(FALLBACK_ETF_FLOW)),
+    "fear_greed_cache": PersistentCache(deepcopy(FALLBACK_FEAR_GREED)),
     "security_cache": PersistentCache({}),
 }
 
@@ -856,6 +870,7 @@ def clear_cache() -> None:
         _persistent_caches["ownership_cache"] = PersistentCache(deepcopy(FALLBACK_SUPPLY_OWNERSHIP))
         _persistent_caches["institutional_cache"] = PersistentCache({})
         _persistent_caches["etf_cache"] = PersistentCache(deepcopy(FALLBACK_ETF_FLOW))
+        _persistent_caches["fear_greed_cache"] = PersistentCache(deepcopy(FALLBACK_FEAR_GREED))
         _persistent_caches["security_cache"] = PersistentCache({})
 
 
@@ -2120,6 +2135,55 @@ def _remember_successful_treasury(payload: dict[str, Any]) -> dict[str, Any]:
     with _treasury_cache_lock:
         _last_successful_treasury = deepcopy(normalized)
     return normalized
+
+
+def get_fear_greed_index(settings: Settings) -> dict[str, Any]:
+    return _cached_resource(
+        "fear_greed_cache",
+        FEAR_GREED_TTL_SECONDS,
+        lambda: _get_fear_greed_from_alternative(settings),
+        "Fear & Greed index refreshed",
+        "Fear & Greed index fallback served",
+        FALLBACK_FEAR_GREED,
+    )
+
+
+def _get_fear_greed_from_alternative(settings: Settings) -> dict[str, Any]:
+    data = _get_json(ALTERNATIVE_FEAR_GREED_URL, settings)
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise DataSourceError("Alternative.me Fear & Greed payload missing data")
+    row = rows[0]
+    if not isinstance(row, dict):
+        raise DataSourceError("Alternative.me Fear & Greed row is invalid")
+
+    value = _to_float_or_none(row.get("value"))
+    if value is None:
+        raise DataSourceError("Alternative.me Fear & Greed value is invalid")
+
+    timestamp = _parse_unix_timestamp(row.get("timestamp"))
+    classification = str(row.get("value_classification") or "N/A").strip() or "N/A"
+    return {
+        "value": int(value) if value.is_integer() else round(value, 1),
+        "classification": classification,
+        "source": "alternative.me",
+        "source_label": "Alternative.me",
+        "status": "ok",
+        "updated_at": "",
+        "data_timestamp": timestamp,
+        "data_note": "Crypto Fear & Greed Index loaded from Alternative.me.",
+        "error": "",
+    }
+
+
+def _parse_unix_timestamp(value: Any) -> str:
+    numeric = _to_float_or_none(value)
+    if numeric is None or numeric <= 0:
+        return ""
+    return datetime.fromtimestamp(numeric, UTC).replace(microsecond=0).isoformat().replace(
+        "+00:00",
+        "Z",
+    )
 
 
 def _utc_now_iso() -> str:

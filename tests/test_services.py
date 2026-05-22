@@ -9,6 +9,7 @@ import requests
 from btc_dashboard.config import Settings
 from btc_dashboard.services import (
     BTC_PRICE_TTL_SECONDS,
+    FEAR_GREED_TTL_SECONDS,
     FEE_MEMPOOL_TTL_SECONDS,
     HASHRATE_TTL_SECONDS,
     NODE_COUNT_TTL_SECONDS,
@@ -31,6 +32,7 @@ from btc_dashboard.services import (
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
     get_etf_flow,
+    get_fear_greed_index,
     get_fee_data,
     get_hashrate,
     get_hashrate_chart_points,
@@ -946,6 +948,50 @@ def test_get_btc_treasury_holdings_preserves_last_successful_value(monkeypatch, 
 
 def test_treasury_ttl_is_twenty_four_hours() -> None:
     assert TREASURY_TTL_SECONDS == 24 * 60 * 60
+
+
+def test_fear_greed_ttl_is_twenty_four_hours() -> None:
+    assert FEAR_GREED_TTL_SECONDS == 24 * 60 * 60
+
+
+def test_get_fear_greed_index_parses_alternative_me(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert "alternative.me/fng" in url
+        return FakeResponse({
+            "data": [
+                {
+                    "value": "72",
+                    "value_classification": "Greed",
+                    "timestamp": "1779417600",
+                }
+            ]
+        })
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_fear_greed_index(_settings(tmp_path, cache_ttl_seconds=0))
+
+    assert payload["value"] == 72
+    assert payload["classification"] == "Greed"
+    assert payload["source_label"] == "Alternative.me"
+    assert payload["status"] == "ok"
+    assert payload["data_timestamp"].endswith("Z")
+    assert payload["updated_at"]
+
+
+def test_get_fear_greed_index_returns_safe_fallback(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_fear_greed_index(_settings(tmp_path, cache_ttl_seconds=0))
+
+    assert payload["value"] == "N/A"
+    assert payload["classification"] == "N/A"
+    assert payload["source_label"] == "Alternative.me"
+    assert payload["status"] == "error"
+    assert "HTTP 503" in payload["error"]
 
 
 def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp_path) -> None:

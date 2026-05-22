@@ -4,8 +4,9 @@ import argparse
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -21,6 +22,8 @@ LIVE_SOURCE_LOADERS = (
     ("farside-latest", "_get_etf_flow_from_farside_latest", None),
     ("farside", "_get_etf_flow_from_farside", None),
     ("bitbo", "_get_etf_flow_from_bitbo", None),
+    ("walletpilot", "_get_etf_flow_from_walletpilot", None),
+    ("globalcoinguide", "_get_etf_flow_from_globalcoinguide", None),
 )
 
 
@@ -32,7 +35,35 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def is_live_etf_payload(payload: dict[str, Any]) -> bool:
+def expected_previous_us_trading_date(now: datetime | None = None) -> date:
+    bangkok_now = now.astimezone(ZoneInfo("Asia/Bangkok")) if now else datetime.now(
+        ZoneInfo("Asia/Bangkok"),
+    )
+    expected = bangkok_now.date() - timedelta(days=1)
+    while expected.weekday() >= 5:
+        expected -= timedelta(days=1)
+    return expected
+
+
+def parse_etf_payload_latest_date(payload: dict[str, Any]) -> date | None:
+    latest_date = str(payload.get("latest_date") or "").strip()
+    if latest_date:
+        return services._parse_etf_date(latest_date)
+
+    history = payload.get("flow_history")
+    if not isinstance(history, list) or not history:
+        return None
+    latest_row = history[-1]
+    if not isinstance(latest_row, dict):
+        return None
+    return services._parse_etf_date(str(latest_row.get("date") or ""))
+
+
+def is_live_etf_payload(
+    payload: dict[str, Any],
+    *,
+    minimum_latest_date: date | None = None,
+) -> bool:
     if payload.get("source") in {"fallback", "manual"}:
         return False
     if payload.get("is_fallback"):
@@ -40,11 +71,19 @@ def is_live_etf_payload(payload: dict[str, Any]) -> bool:
     history = payload.get("flow_history")
     if not isinstance(history, list) or not history:
         return False
-    latest_date = str(payload.get("latest_date") or "").strip()
-    return bool(latest_date)
+    latest_date = parse_etf_payload_latest_date(payload)
+    if latest_date is None:
+        return False
+    if minimum_latest_date and latest_date < minimum_latest_date:
+        return False
+    return True
 
 
-def fetch_live_etf_flow(settings: Settings) -> dict[str, Any]:
+def fetch_live_etf_flow(
+    settings: Settings,
+    *,
+    minimum_latest_date: date | None = None,
+) -> dict[str, Any]:
     failures: list[str] = []
     for source_name, loader_name, required_key in LIVE_SOURCE_LOADERS:
         if required_key and not getattr(settings, required_key):
@@ -52,8 +91,15 @@ def fetch_live_etf_flow(settings: Settings) -> dict[str, Any]:
             continue
         loader = getattr(services, loader_name)
         payload = loader(settings)
-        if is_live_etf_payload(payload):
+        if is_live_etf_payload(payload, minimum_latest_date=minimum_latest_date):
             return payload
+        latest_date = parse_etf_payload_latest_date(payload)
+        if minimum_latest_date and latest_date and latest_date < minimum_latest_date:
+            failures.append(
+                f"{source_name}: latest row {latest_date.isoformat()} "
+                f"is older than expected {minimum_latest_date.isoformat()}",
+            )
+            continue
         failures.append(f"{source_name}: {payload.get('error') or 'no usable live rows'}")
     raise EtfUpdateError("No live ETF flow source returned usable rows. " + " | ".join(failures))
 
@@ -137,13 +183,31 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "15")),
     )
+    parser.add_argument(
+        "--expected-date",
+        default=os.getenv("ETF_EXPECTED_DATE", ""),
+        help="Minimum ETF flow date to accept, in YYYY-MM-DD format.",
+    )
+    parser.add_argument(
+        "--allow-stale-source",
+        action="store_true",
+        help="Allow posting the latest source row even if it is older than the expected date.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     settings = Settings.from_env()
-    live_payload = fetch_live_etf_flow(settings)
+    expected_date = None
+    if not args.allow_stale_source:
+        expected_date = (
+            date.fromisoformat(args.expected_date)
+            if args.expected_date
+            else expected_previous_us_trading_date()
+        )
+        print(f"Minimum ETF flow date required: {expected_date.isoformat()}")
+    live_payload = fetch_live_etf_flow(settings, minimum_latest_date=expected_date)
     admin_payload = build_manual_payload(live_payload)
     latest_date = admin_payload["flow_history"][-1]["date"]
 

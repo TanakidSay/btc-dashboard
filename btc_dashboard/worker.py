@@ -25,6 +25,7 @@ if __package__:
         get_btc_supply_ownership,
         get_btc_treasury_holdings,
         get_etf_flow,
+        get_fear_greed_index,
         get_fee_data,
         get_hashrate_chart_points,
         get_hashrate_result,
@@ -49,6 +50,7 @@ else:
         get_btc_supply_ownership,
         get_btc_treasury_holdings,
         get_etf_flow,
+        get_fear_greed_index,
         get_fee_data,
         get_hashrate_chart_points,
         get_hashrate_result,
@@ -73,6 +75,7 @@ _METRIC_INTERVALS = {
     "treasury": 60 * 60,
     "ownership": 60 * 60,
     "etf": 60 * 60,
+    "fear_greed": 24 * 60 * 60,
     "network": 30 * 60,
     "security": 30 * 60,
     "daily_x_post": 60,
@@ -88,6 +91,7 @@ def warm_local_cache(settings: Settings) -> None:
         hashrate_points = get_hashrate_chart_points(settings)
         node_metric = get_node_count_result(settings)
         get_etf_flow(settings)
+        get_fear_greed_index(settings)
         get_btc_treasury_holdings(settings)
         get_btc_supply_ownership(settings)
         get_security_overview(settings)
@@ -167,6 +171,8 @@ def refresh_once(settings: Settings) -> None:
 
         if _due("etf", now_monotonic):
             get_etf_flow(settings)
+        if _due("fear_greed", now_monotonic):
+            get_fear_greed_index(settings)
         if _due("treasury", now_monotonic):
             get_btc_treasury_holdings(settings)
         if _due("ownership", now_monotonic):

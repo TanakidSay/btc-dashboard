@@ -3,10 +3,13 @@ name: Update ETF flows
 on:
   schedule:
     # ETF flow rows, especially IBIT/BlackRock, are normally available around
-    # 7:00 AM Bangkok time. Run at 8:30 AM Bangkok time (01:30 UTC),
-    # Tuesday-Saturday, so the previous US trading day has time to appear before
-    # we update the manual file.
+    # 7:00 AM Bangkok time. GitHub scheduled workflows can be delayed, so run
+    # several morning retries at 8:30, 10:30, and 12:30 Bangkok time
+    # (01:30/03:30/05:30 UTC), Tuesday-Saturday. The updater refuses to post
+    # rows older than the previous US trading day.
     - cron: "30 1 * * 2-6"
+    - cron: "30 3 * * 2-6"
+    - cron: "30 5 * * 2-6"
   workflow_dispatch:
 
 jobs:

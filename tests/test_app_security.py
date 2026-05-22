@@ -211,6 +211,25 @@ def test_treasury_route_returns_stable_json_when_service_fails(monkeypatch, tmp_
     }
 
 
+def test_fear_greed_route_returns_stable_json_when_service_fails(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_fear_greed_index",
+        lambda settings: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/fear-greed")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["value"] == "N/A"
+    assert body["classification"] == "N/A"
+    assert body["source_label"] == "Alternative.me"
+    assert body["status"] == "error"
+    assert body["error"] == "boom"
+
+
 def test_security_route_never_returns_null_fields(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     monkeypatch.setattr(

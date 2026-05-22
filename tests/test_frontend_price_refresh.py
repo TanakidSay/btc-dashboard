@@ -77,3 +77,16 @@ def test_frontend_renders_treasury_source_and_last_checked() -> None:
     assert "treasurySource" in dashboard_html
     assert "treasuryData.source_label" in dashboard_js
     assert "Last checked:" in dashboard_js
+
+
+def test_frontend_renders_lightweight_fear_greed_card() -> None:
+    dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+    dashboard_html = (ROOT / "btc_dashboard/templates/dashboard.html").read_text(
+        encoding="utf-8",
+    )
+
+    assert "Fear &amp; Greed" in dashboard_html
+    assert "fearGreedValue" in dashboard_html
+    assert 'fetchJson("/api/fear-greed")' in dashboard_js
+    assert "renderFearGreed" in dashboard_js
+    assert 'startRefreshJob("fear-greed", refreshFearGreed, 60 * 60 * 1000)' in dashboard_js

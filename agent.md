@@ -101,6 +101,9 @@ The app is designed to tolerate external data-source failures:
 - BTC price change is compared against a persisted Bangkok 7 AM baseline so it
   does not collapse to zero between refreshes.
 - Node count uses Bitnodes as a global reachable-node snapshot.
+- Fear & Greed is a small sentiment card sourced from Alternative.me. It is
+  daily data, cached for 24 hours, and should stay lightweight rather than
+  becoming another heavy signal section.
 - ETF flow uses Farside first when available. If API keys are configured, it can
   use CoinGlass and SoSoValue. If those sources are unavailable, it uses the
   manual ETF JSON file before public fallback scrapes and seeded estimates.
@@ -277,9 +280,14 @@ Invoke-RestMethod "https://btcwindow.uk/api/etf" |
 Automatic ETF update notes:
 
 - `.github/workflows/update-etf-flows.yml` runs the ETF updater Tuesday-Saturday
-  at `01:30 UTC` / `8:30 AM Bangkok time`, because IBIT/BlackRock ETF flow rows
-  are normally available around `7:00 AM Bangkok time`; this gives the updater a
-  90-minute buffer before posting to the manual ETF endpoint.
+  at `01:30`, `03:30`, and `05:30 UTC`, which is `8:30 AM`, `10:30 AM`, and
+  `12:30 PM Bangkok time`.
+- IBIT/BlackRock ETF flow rows are normally available around `7:00 AM Bangkok
+  time`, but GitHub scheduled workflows can run late and public ETF sources can
+  lag, so the workflow uses several morning retries.
+- The updater refuses to post source rows older than the expected previous US
+  trading day. This prevents stale rows such as a `May 20` public fallback row
+  from being posted as the current value on `May 22`.
 - The workflow runs `python scripts/update_etf_flows.py`.
 - Required GitHub repository secret: `ETF_ADMIN_TOKEN`. Use the same value as
   Railway `ETF_ADMIN_TOKEN`.
@@ -290,8 +298,9 @@ Automatic ETF update notes:
   `SOSOVALUE_API_KEY`.
 - The updater fetches live/public ETF rows from the GitHub runner, converts them
   to the manual admin payload, and posts to `/api/admin/etf-flows`.
-- The updater intentionally fails instead of posting fallback estimates,
-  manual data, or fabricated live data if no usable live rows are available.
+- The updater intentionally fails instead of posting stale rows, fallback
+  estimates, manual data, or fabricated live data if no usable current live rows
+  are available.
 - The script checks current production `/api/etf` first and skips the admin POST
   when the latest date is already current unless `--force` is used. If that
   read-only check is blocked, the script continues to the admin POST instead of

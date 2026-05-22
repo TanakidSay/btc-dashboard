@@ -39,11 +39,14 @@ fallback; local Bitcoin Core peer connections are not shown as global nodes.
 Ownership analytics are intentionally transparent: pseudonymous or research-only
 buckets are marked as estimates or limited-visibility values instead of precise
 live ownership facts.
+The small Fear & Greed card uses Alternative.me as a daily sentiment source and
+is cached for 24 hours so it does not add meaningful load to the dashboard.
 
 The latest worker-populated metrics are exposed at:
 
 ```text
 /api/metrics
+/api/fear-greed
 ```
 
 ## Alerts and Notifications
@@ -234,14 +237,17 @@ Invoke-RestMethod `
 Automatic ETF updates can run from GitHub Actions with
 `.github/workflows/update-etf-flows.yml`. Add the repository secret
 `ETF_ADMIN_TOKEN` with the same value as Railway, then run the workflow manually
-once from GitHub Actions. The scheduled job runs Tuesday-Saturday at 01:30 UTC
-or 8:30 AM Bangkok time, after the previous US trading day's ETF flow rows are
-usually available, then fetches live/public ETF flow rows from the GitHub runner and posts them to
-`/api/admin/etf-flows`. Optional repository secrets `COINGLASS_API_KEY` and
+once from GitHub Actions. The scheduled job runs Tuesday-Saturday at 01:30,
+03:30, and 05:30 UTC, which is 8:30 AM, 10:30 AM, and 12:30 PM Bangkok time.
+Those retries give ETF providers time to publish the previous US trading day's
+flow rows. The updater refuses to post rows older than the expected previous US
+trading day, then posts valid live/public ETF flow rows from the GitHub runner
+to `/api/admin/etf-flows`. Optional repository secrets `COINGLASS_API_KEY` and
 `SOSOVALUE_API_KEY` are used when present. The updater fails rather than posting
-fallback or fabricated data if no usable live ETF rows are available. The
-workflow defaults to the Railway generated domain for admin updates so
-Cloudflare bot checks on the public domain do not block the GitHub runner.
+stale, fallback, or fabricated data if no usable current live ETF rows are
+available. The workflow defaults to the Railway generated domain for admin
+updates so Cloudflare bot checks on the public domain do not block the GitHub
+runner.
 
 Optional X posting variables for Railway:
 
