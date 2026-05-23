@@ -23,6 +23,7 @@ from btc_dashboard.services import (
     _parse_bitbo_etf_rows,
     _parse_farside_etf_rows_from_text,
     _parse_farside_latest_rows,
+    _parse_walletpilot_embedded_flow_rows,
     build_alerts,
     clear_cache,
     fee_spike_alert,
@@ -1282,6 +1283,21 @@ def test_extract_etf_scrape_values_from_public_pages() -> None:
     assert _extract_millions_flow(globalcoinguide_text, "Weekly Net Flow") == 2_100_000_000.0
 
 
+def test_parse_walletpilot_embedded_flow_rows_groups_latest_etf_flows() -> None:
+    rows = _parse_walletpilot_embedded_flow_rows(
+        'etfs:[{ticker:"IBIT",netFlows1d:-103.64,netFlows7d:-1075.32,'
+        'lastFlowDate:"2026-05-21T00:00:00.000Z"},'
+        '{ticker:"ARKB",netFlows1d:2.83,netFlows7d:-159.29,'
+        'lastFlowDate:"2026-05-21T00:00:00.000Z"},'
+        '{ticker:"FBTC",netFlows1d:0,lastFlowDate:"2026-05-20T00:00:00.000Z"}]',
+    )
+
+    assert rows == [
+        {"date": "2026-05-20", "net_flow_usd": 0.0, "close_price": None},
+        {"date": "2026-05-21", "net_flow_usd": -100_810_000.0, "close_price": None},
+    ]
+
+
 def test_etf_date_freshness_rejects_stale_scrape_dates(monkeypatch) -> None:
     monkeypatch.setattr(
         "btc_dashboard.services._utc_now_dt",
@@ -1321,6 +1337,34 @@ def test_get_etf_flow_uses_walletpilot_public_fallback(monkeypatch, tmp_path) ->
     assert payload["latest_net_flow_usd"] == 411_000_000.0
     assert payload["7d_flow"] == 573_000_000.0
     assert payload["flow_history"][0]["close_price"] == 0
+
+
+def test_get_etf_flow_uses_walletpilot_embedded_public_fallback(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk" in url or "r.jina.ai" in url or "bitbo.io" in url:
+            return FakeResponse(status_code=403)
+        if "walletpilot.com/bitcoin-tracker/etfs" in url:
+            return FakeResponse(
+                text=(
+                    'etfs:[{ticker:"IBIT",netFlows1d:-103.64,netFlows7d:-1075.32,'
+                    'lastFlowDate:"2026-05-21T00:00:00.000Z"},'
+                    '{ticker:"ARKB",netFlows1d:2.83,netFlows7d:-159.29,'
+                    'lastFlowDate:"2026-05-21T00:00:00.000Z"}]'
+                )
+            )
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 22, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "walletpilot"
+    assert payload["latest_date"] == "2026-05-21"
+    assert payload["latest_net_flow_usd"] == -100_810_000.0
 
 
 def test_get_etf_flow_uses_globalcoinguide_public_fallback(monkeypatch, tmp_path) -> None:

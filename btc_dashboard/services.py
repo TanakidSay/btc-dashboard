@@ -68,6 +68,12 @@ FARSIDE_BTC_ETF_READER_URL = "https://r.jina.ai/http://https://farside.co.uk/btc
 FARSIDE_BTC_ETF_FLOW_READER_URL = (
     "https://r.jina.ai/http://https://farside.co.uk/bitcoin-etf-flow-all-data/"
 )
+FARSIDE_BTC_ETF_READER_URLS = (
+    FARSIDE_BTC_ETF_READER_URL,
+    FARSIDE_BTC_ETF_FLOW_READER_URL,
+    "https://r.jina.ai/http://r.jina.ai/http://https://farside.co.uk/btc/",
+    "https://r.jina.ai/http://r.jina.ai/http://https://farside.co.uk/bitcoin-etf-flow-all-data/",
+)
 BITBO_BTC_ETF_FLOW_URL = "https://bitbo.io/treasuries/etf-flows/"
 WALLETPILOT_BTC_ETF_URL = "https://www.walletpilot.com/bitcoin-tracker/etfs"
 GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flows"
@@ -1468,12 +1474,15 @@ def _get_etf_flow_from_farside_latest(settings: Settings) -> dict[str, Any]:
 
 def _get_etf_flow_from_farside_reader(settings: Settings) -> dict[str, Any]:
     last_error = ""
-    for url in (FARSIDE_BTC_ETF_READER_URL, FARSIDE_BTC_ETF_FLOW_READER_URL):
+    for url in FARSIDE_BTC_ETF_READER_URLS:
         try:
-            text = _get_text(url, settings)
+            text = _get_browser_text(url, settings)
             rows = _parse_farside_etf_rows_from_text(text) or _parse_farside_latest_rows(text)
             if not rows:
-                raise ValueError("Farside reader page has no parsable rows")
+                raise ValueError(
+                    "Farside reader page has no parsable rows; "
+                    f"snippet={text[:160]!r}",
+                )
             return _normalize_etf_payload(rows[-30:], "farside-reader")
         except Exception as exc:
             last_error = str(exc)
@@ -1670,6 +1679,13 @@ def _get_etf_flow_from_walletpilot(settings: Settings) -> dict[str, Any]:
     try:
         html = _get_text(WALLETPILOT_BTC_ETF_URL, settings)
         text = _clean_page_text(html)
+        embedded_rows = _parse_walletpilot_embedded_flow_rows(html)
+        if embedded_rows:
+            payload = _normalize_etf_payload(embedded_rows[-30:], "walletpilot")
+            latest_parsed = _parse_etf_date(str(payload.get("latest_date") or ""))
+            if latest_parsed:
+                payload["latest_date"] = latest_parsed.isoformat()
+            return payload
         latest_date = _extract_walletpilot_date(text)
         latest_flow = _extract_millions_flow(text, "1-Day Net Flows")
         seven_day_flow = _extract_millions_flow(text, "7-Day Net Flows")
@@ -1930,6 +1946,27 @@ def _extract_walletpilot_date(text: str) -> str:
 def _extract_globalcoinguide_date(text: str) -> str:
     match = re.search(r"Last updated:\s*([A-Za-z]{3}\s+[0-9]{1,2}(?:,\s*[0-9]{4})?)", text)
     return match.group(1) if match else ""
+
+
+def _parse_walletpilot_embedded_flow_rows(html: str) -> list[dict[str, Any]]:
+    grouped: dict[str, float] = {}
+    pattern = re.compile(
+        r"netFlows1d\s*:\s*(-?\d+(?:\.\d+)?)\b.*?"
+        r"lastFlowDate\s*:\s*\"(\d{4}-\d{2}-\d{2})T",
+        flags=re.DOTALL,
+    )
+    for match in pattern.finditer(html):
+        flow_millions = float(match.group(1))
+        date_value = match.group(2)
+        grouped[date_value] = grouped.get(date_value, 0.0) + flow_millions
+    return [
+        {
+            "date": date_value,
+            "net_flow_usd": round(flow_millions * 1_000_000, 2),
+            "close_price": None,
+        }
+        for date_value, flow_millions in sorted(grouped.items())
+    ]
 
 
 def _parse_bitbo_etf_rows(html: str) -> list[dict[str, Any]]:

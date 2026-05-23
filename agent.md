@@ -310,7 +310,11 @@ Automatic ETF update notes:
   includes Farside direct first, then a Farside reader fallback via
   `https://r.jina.ai/http://https://farside.co.uk/btc/` so GitHub Actions can
   still read the public Farside table when direct Farside is blocked by
-  Cloudflare.
+  Cloudflare. The reader loader also tries alternate reader URL forms and logs
+  a short response snippet when parsing fails.
+- WalletPilot is a secondary public fallback. Its page is Svelte-rendered, so
+  the backend parses embedded `netFlows1d` / `lastFlowDate` data in addition to
+  visible text labels.
 - The updater intentionally fails instead of posting stale rows, fallback
   estimates, manual data, or fabricated live data if no usable current live rows
   are available.
