@@ -306,7 +306,11 @@ Automatic ETF update notes:
 - Optional GitHub repository secrets: `COINGLASS_API_KEY`,
   `SOSOVALUE_API_KEY`.
 - The updater fetches live/public ETF rows from the GitHub runner, converts them
-  to the manual admin payload, and posts to `/api/admin/etf-flows`.
+  to the manual admin payload, and posts to `/api/admin/etf-flows`. Source order
+  includes Farside direct first, then a Farside reader fallback via
+  `https://r.jina.ai/http://https://farside.co.uk/btc/` so GitHub Actions can
+  still read the public Farside table when direct Farside is blocked by
+  Cloudflare.
 - The updater intentionally fails instead of posting stale rows, fallback
   estimates, manual data, or fabricated live data if no usable current live rows
   are available.
@@ -314,6 +318,9 @@ Automatic ETF update notes:
   when the latest date is already current unless `--force` is used. If that
   read-only check is blocked, the script continues to the admin POST instead of
   failing early.
+- `/api/etf` and `/api/admin/etf-flows` must not redirect on the Railway
+  generated domain. GitHub Actions uses the Railway domain to bypass Cloudflare
+  bot protection, so both endpoints are exempt from canonical-host redirects.
 - Manual workflow run: GitHub repository -> Actions -> `Update ETF flows` ->
   `Run workflow`.
 - Local dry run:

@@ -64,6 +64,10 @@ COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/
 SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
 FARSIDE_BTC_ETF_LATEST_URL = "https://farside.co.uk/btc/"
+FARSIDE_BTC_ETF_READER_URL = "https://r.jina.ai/http://https://farside.co.uk/btc/"
+FARSIDE_BTC_ETF_FLOW_READER_URL = (
+    "https://r.jina.ai/http://https://farside.co.uk/bitcoin-etf-flow-all-data/"
+)
 BITBO_BTC_ETF_FLOW_URL = "https://bitbo.io/treasuries/etf-flows/"
 WALLETPILOT_BTC_ETF_URL = "https://www.walletpilot.com/bitcoin-tracker/etfs"
 GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flows"
@@ -1346,7 +1350,11 @@ def get_etf_flow(settings: Settings) -> dict[str, Any]:
 
 def _get_etf_flow_with_fallback(settings: Settings) -> dict[str, Any]:
     manual_data = _get_etf_flow_from_manual_file(settings)
-    for loader in (_get_etf_flow_from_farside_latest, _get_etf_flow_from_farside):
+    for loader in (
+        _get_etf_flow_from_farside_latest,
+        _get_etf_flow_from_farside,
+        _get_etf_flow_from_farside_reader,
+    ):
         farside_data = loader(settings)
         if farside_data["source"] != "fallback":
             return farside_data
@@ -1456,6 +1464,23 @@ def _get_etf_flow_from_farside_latest(settings: Settings) -> dict[str, Any]:
         fallback = FALLBACK_ETF_FLOW.copy()
         fallback["error"] = str(exc)
         return fallback
+
+
+def _get_etf_flow_from_farside_reader(settings: Settings) -> dict[str, Any]:
+    last_error = ""
+    for url in (FARSIDE_BTC_ETF_READER_URL, FARSIDE_BTC_ETF_FLOW_READER_URL):
+        try:
+            text = _get_text(url, settings)
+            rows = _parse_farside_etf_rows_from_text(text) or _parse_farside_latest_rows(text)
+            if not rows:
+                raise ValueError("Farside reader page has no parsable rows")
+            return _normalize_etf_payload(rows[-30:], "farside-reader")
+        except Exception as exc:
+            last_error = str(exc)
+            logger.warning("Farside reader ETF flow request failed: %s", exc)
+    fallback = FALLBACK_ETF_FLOW.copy()
+    fallback["error"] = last_error or "Farside reader ETF flow request failed"
+    return fallback
 
 
 def _get_etf_flow_from_bitbo(settings: Settings) -> dict[str, Any]:
@@ -1776,6 +1801,7 @@ def _etf_source_label(source: str, is_fallback: bool) -> str:
     return {
         "bitbo": "Bitbo",
         "coinglass": "CoinGlass",
+        "farside-reader": "Live",
         "manual": "Manual",
         "seeded-fallback": "Fallback estimate",
     }.get(source, "Live")
@@ -1787,6 +1813,7 @@ def _etf_data_note(source: str, is_fallback: bool) -> str:
     return {
         "bitbo": "ETF flow data loaded from Bitbo public table.",
         "coinglass": "ETF flow data loaded from CoinGlass.",
+        "farside-reader": "ETF flow data loaded from Farside via reader fallback.",
         "manual": "ETF flow data loaded from local manual file.",
     }.get(source, "ETF flow history is using live source data.")
 
@@ -1848,6 +1875,10 @@ def _parse_farside_etf_rows_from_text(text: str) -> list[dict[str, Any]]:
         if "|" not in line:
             continue
         parts = [part.strip() for part in line.split("|")]
+        while parts and not parts[0]:
+            parts.pop(0)
+        while parts and not parts[-1]:
+            parts.pop()
         if len(parts) < 2:
             continue
         date_value = parts[0]

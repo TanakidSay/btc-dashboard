@@ -21,6 +21,7 @@ LIVE_SOURCE_LOADERS = (
     ("coinglass", "_get_etf_flow_from_coinglass", "coinglass_api_key"),
     ("farside-latest", "_get_etf_flow_from_farside_latest", None),
     ("farside", "_get_etf_flow_from_farside", None),
+    ("farside-reader", "_get_etf_flow_from_farside_reader", None),
     ("bitbo", "_get_etf_flow_from_bitbo", None),
     ("walletpilot", "_get_etf_flow_from_walletpilot", None),
     ("globalcoinguide", "_get_etf_flow_from_globalcoinguide", None),
@@ -138,7 +139,7 @@ def build_manual_payload(
             continue
         clean_row: dict[str, Any] = {
             "date": str(row.get("date") or "").strip(),
-            "net_flow_usd": net_flow_usd,
+            "net_flow_usd": round(net_flow_usd, 2),
         }
         if row.get("close_price") not in (None, "", "N/A"):
             try:

@@ -132,6 +132,25 @@ def test_health_check_does_not_redirect_on_railway_host(monkeypatch, tmp_path) -
     assert response.status_code == 200
 
 
+def test_etf_api_does_not_redirect_on_railway_host(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_etf_flow",
+        lambda settings: {
+            "latest_date": "2026-05-22",
+            "latest_net_flow_usd": -36_300_000,
+            "flow_history": [{"date": "2026-05-22", "net_flow_usd": -36_300_000}],
+        },
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/etf", headers={"Host": "btcwindow.up.railway.app"})
+
+    assert response.status_code == 200
+    assert "Location" not in response.headers
+    assert response.get_json()["latest_date"] == "2026-05-22"
+
+
 def test_etf_admin_update_does_not_redirect_on_railway_host(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path, etf_admin_token="secret-token"))

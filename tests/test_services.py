@@ -1228,11 +1228,13 @@ def test_parse_farside_etf_rows_from_text_handles_pipe_rows() -> None:
     rows = _parse_farside_etf_rows_from_text(
         "06 Apr 2026 | 181.9 | 147.3 | 3.8 | 118.8 | 471.4\n"
         "07 Apr 2026 | (10.0) | 0.0 | 0.0 | 0.0 | (10.0)\n"
+        "| 22 May 2026 | - | (36.3) | 0.0 | 0.0 | (36.3) |\n"
     )
 
     assert rows == [
         {"date": "06 Apr 2026", "net_flow_usd": 471_400_000.0, "close_price": None},
         {"date": "07 Apr 2026", "net_flow_usd": -10_000_000.0, "close_price": None},
+        {"date": "22 May 2026", "net_flow_usd": -36_300_000.0, "close_price": None},
     ]
 
 
@@ -1378,6 +1380,37 @@ def test_get_etf_flow_uses_bitbo_public_table(monkeypatch, tmp_path) -> None:
     assert payload["is_stale"] is False
     assert payload["latest_date"] == "May 07, 2026"
     assert payload["latest_net_flow_usd"] == -261_200_000.0
+    assert len(payload["flow_history"]) == 2
+
+
+def test_get_etf_flow_uses_farside_reader_when_direct_farside_is_blocked(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "r.jina.ai" in url:
+            return FakeResponse(
+                text=(
+                    "| 21 May 2026 | (103.7) | 0.0 | 0.0 | 2.8 | (100.9) |\n"
+                    "| 22 May 2026 | - | (36.3) | 0.0 | 0.0 | (36.3) |"
+                )
+            )
+        if "farside.co.uk" in url:
+            return FakeResponse(status_code=403)
+        return FakeResponse(status_code=503)
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 23, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path))
+
+    assert payload["source"] == "farside-reader"
+    assert payload["source_label"] == "Live"
+    assert payload["latest_date"] == "22 May 2026"
+    assert payload["latest_net_flow_usd"] == -36_300_000.0
     assert len(payload["flow_history"]) == 2
 
 

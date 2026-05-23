@@ -32,7 +32,7 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.before_request
     def redirect_to_canonical_host():
-        if request.endpoint in {"api.healthz", "api.api_admin_etf_flows", "static"}:
+        if request.endpoint in {"api.healthz", "api.api_admin_etf_flows", "api.api_etf", "static"}:
             return None
         if not _should_redirect_to_canonical_host(settings):
             return None
