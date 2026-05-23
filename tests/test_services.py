@@ -866,7 +866,7 @@ def test_fee_data_cache_uses_thirty_second_cadence(monkeypatch, tmp_path) -> Non
     assert calls["best_hash"] == 2
 
 
-def test_get_btc_treasury_holdings_tries_next_provider_before_success(
+def test_get_btc_treasury_holdings_reads_coingecko_company_treasury(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -874,8 +874,7 @@ def test_get_btc_treasury_holdings_tries_next_provider_before_success(
 
     def fake_get(url: str, **kwargs) -> FakeResponse:
         calls["count"] += 1
-        if calls["count"] == 1:
-            return FakeResponse(status_code=503)
+        assert url == "https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin"
         return FakeResponse({
             "total_holdings": 123456.78,
             "market_cap_dominance": 0.59,
@@ -893,7 +892,7 @@ def test_get_btc_treasury_holdings_tries_next_provider_before_success(
 
     payload = get_btc_treasury_holdings(_settings(tmp_path, cache_ttl_seconds=0))
 
-    assert calls["count"] == 2
+    assert calls["count"] == 1
     assert payload["status"] == "ok"
     assert payload["source"] == "coingecko-company-treasury"
     assert payload["source_label"] == "CoinGecko | Live"
@@ -944,7 +943,7 @@ def test_get_btc_treasury_holdings_preserves_last_successful_value(monkeypatch, 
     assert second["updated_at"] == first["updated_at"]
     assert second["source_label"] == "CoinGecko | Stale"
     assert second["data_note"] == "Treasury data is cached because the live source is unavailable."
-    assert "coingecko-public-treasury" in second["error"]
+    assert "coingecko-company-treasury" in second["error"]
 
 
 def test_treasury_ttl_is_twenty_four_hours() -> None:
@@ -1007,8 +1006,8 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
 
     payload = get_btc_treasury_holdings(_settings(tmp_path, cache_ttl_seconds=0))
 
-    assert payload["total_btc_held"] == 1_229_927
-    assert payload["treasury_dominance_percent"] == 5.86
+    assert payload["total_btc_held"] == 1_271_929
+    assert payload["treasury_dominance_percent"] == 6.06
     assert payload["top_holders"][0]["name"] == "Strategy"
     assert len(payload["top_holders"]) == 10
     assert [holder["name"] for holder in payload["top_holders"]] == [
@@ -1017,11 +1016,11 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
         "Metaplanet",
         "MARA Holdings",
         "Bitcoin Standard Treasury Company",
-        "Galaxy Digital",
+        "Galaxy Digital Holdings Ltd",
         "Bullish",
+        "SpaceX",
         "Riot Platforms",
-        "Coinbase",
-        "Strive",
+        "Coinbase Global",
     ]
     assert [holder["btc_held"] for holder in payload["top_holders"]] == sorted(
         [holder["btc_held"] for holder in payload["top_holders"]],
@@ -1031,7 +1030,6 @@ def test_get_btc_treasury_holdings_returns_stable_error_payload(monkeypatch, tmp
     assert payload["source"] == "coingecko-treasury-estimate"
     assert payload["status"] == "fallback"
     assert payload["updated_at"]
-    assert "coingecko-public-treasury: HTTP 503" in payload["error"]
     assert "coingecko-company-treasury: HTTP 503" in payload["error"]
     assert "checked public estimate" in payload["data_note"]
 

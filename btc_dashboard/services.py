@@ -80,7 +80,6 @@ GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flo
 ALTERNATIVE_FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=30&format=json"
 BUNDLED_ETF_FLOW_PATH = BASE_DIR / "data/etf_flows.json"
 COINGECKO_TREASURY_URLS = (
-    "https://api.coingecko.com/api/v3/entities/public_treasury/bitcoin",
     "https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin",
 )
 FALLBACK_ETF_FLOW = {
@@ -161,14 +160,14 @@ FALLBACK_FEAR_GREED = {
     "error": "",
 }
 ESTIMATED_BTC_TREASURY = {
-    "total_btc_held": 1_229_927,
-    "treasury_dominance_percent": 5.86,
+    "total_btc_held": 1_271_929,
+    "treasury_dominance_percent": 6.06,
     "top_holders": [
         {
             "name": "Strategy",
             "symbol": "MSTR.US",
-            "btc_held": 818_334,
-            "supply_percent": 3.897,
+            "btc_held": 843_738,
+            "supply_percent": 4.018,
         },
         {
             "name": "XXI",
@@ -185,8 +184,8 @@ ESTIMATED_BTC_TREASURY = {
         {
             "name": "MARA Holdings",
             "symbol": "MARA.US",
-            "btc_held": 38_689,
-            "supply_percent": 0.184,
+            "btc_held": 35_303,
+            "supply_percent": 0.168,
         },
         {
             "name": "Bitcoin Standard Treasury Company",
@@ -195,7 +194,7 @@ ESTIMATED_BTC_TREASURY = {
             "supply_percent": 0.143,
         },
         {
-            "name": "Galaxy Digital",
+            "name": "Galaxy Digital Holdings Ltd",
             "symbol": "GLXY.US",
             "btc_held": 25_723,
             "supply_percent": 0.122,
@@ -207,28 +206,28 @@ ESTIMATED_BTC_TREASURY = {
             "supply_percent": 0.111,
         },
         {
+            "name": "SpaceX",
+            "symbol": "",
+            "btc_held": 18_712,
+            "supply_percent": 0.089,
+        },
+        {
             "name": "Riot Platforms",
             "symbol": "RIOT.US",
             "btc_held": 15_680,
             "supply_percent": 0.075,
         },
         {
-            "name": "Coinbase",
+            "name": "Coinbase Global",
             "symbol": "COIN.US",
             "btc_held": 15_389,
             "supply_percent": 0.073,
-        },
-        {
-            "name": "Strive",
-            "symbol": "ASST.US",
-            "btc_held": 14_556,
-            "supply_percent": 0.069,
         },
     ],
     "source": "coingecko-treasury-estimate",
     "source_label": "CoinGecko estimate",
     "status": "fallback",
-    "updated_at": "2026-05-10T00:00:00Z",
+    "updated_at": "2026-05-23T00:00:00Z",
     "error": "Live treasury source unavailable; using checked public estimate data",
     "data_note": "Treasury data is using checked public estimate data from CoinGecko.",
 }
@@ -2078,8 +2077,7 @@ def _get_btc_treasury_with_fallback(settings: Settings) -> dict[str, Any]:
         headers["x-cg-demo-api-key"] = settings.coingecko_demo_api_key
 
     providers = (
-        ("coingecko-public-treasury", COINGECKO_TREASURY_URLS[0]),
-        ("coingecko-company-treasury", COINGECKO_TREASURY_URLS[1]),
+        ("coingecko-company-treasury", COINGECKO_TREASURY_URLS[0]),
     )
     errors: list[str] = []
 
@@ -2115,16 +2113,24 @@ def _estimated_btc_treasury(error: str) -> dict[str, Any]:
 def _normalize_treasury_payload(data: dict[str, Any], source: str) -> dict[str, Any]:
     holders = data.get("companies") or data.get("entities") or []
     top_holders = []
-    for holder in holders[:5]:
+    for holder in holders:
+        btc_held = _first_number(holder, ("total_holdings", "amount"))
+        if btc_held is None:
+            continue
         top_holders.append({
             "name": holder.get("name", "Unknown"),
             "symbol": holder.get("symbol"),
-            "btc_held": _first_number(holder, ("total_holdings", "amount")),
+            "btc_held": btc_held,
             "supply_percent": _first_number(
                 holder,
                 ("percentage_of_total_supply", "supply_percent"),
             ),
         })
+    top_holders = sorted(
+        top_holders,
+        key=lambda holder: _to_float_or_none(holder.get("btc_held")) or 0,
+        reverse=True,
+    )[:10]
     return _treasury_payload(
         total_btc_held=data.get("total_holdings", "N/A"),
         treasury_dominance_percent=data.get("market_cap_dominance", "N/A"),

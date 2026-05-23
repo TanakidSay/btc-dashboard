@@ -337,8 +337,15 @@ Treasury data notes:
 
 - Treasury BTC holdings are slow-moving institutional data, not a realtime feed.
 - Backend treasury cache TTL is 24 hours to reduce CoinGecko rate-limit pressure.
-- The treasury loader tries CoinGecko public/company endpoints once each, then
-  uses cached/stale data if CoinGecko returns 429 or another source error.
+- The treasury loader tries CoinGecko's public-company treasury endpoint once,
+  then uses cached/stale data if CoinGecko returns 429 or another source error.
+- Use `https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin`
+  for public-company treasury data. Do not use the older
+  `entities/public_treasury/bitcoin` path; CoinGecko now returns 404 for that
+  path.
+- CoinGecko public treasury live data and fallback estimates should show the
+  top 10 holders sorted by BTC held, aligned with the CoinGecko public
+  companies table.
 - The frontend must show a clear treasury source label such as
   `Source: CoinGecko | Live` or `Source: CoinGecko | Stale` plus `Last checked`.
 - Institutional Insight may use cached/stale treasury data because it is a
