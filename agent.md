@@ -101,9 +101,9 @@ The app is designed to tolerate external data-source failures:
 - BTC price change is compared against a persisted Bangkok 7 AM baseline so it
   does not collapse to zero between refreshes.
 - Node count uses Bitnodes as a global reachable-node snapshot.
-- Fear & Greed is a small sentiment card sourced from Alternative.me. It is
-  daily data, cached for 24 hours, and should stay lightweight rather than
-  becoming another heavy signal section.
+- Fear & Greed is a compact sentiment gauge card sourced from Alternative.me. It
+  uses daily data, shows recent historical values, is cached for 24 hours, and
+  should stay lightweight rather than becoming another heavy signal section.
 - ETF flow uses Farside first when available. If API keys are configured, it can
   use CoinGlass and SoSoValue. If those sources are unavailable, it uses the
   manual ETF JSON file before public fallback scrapes and seeded estimates.
@@ -291,6 +291,12 @@ Automatic ETF update notes:
 - The updater refuses to post source rows older than the expected previous US
   trading day. This prevents stale rows such as a `May 20` public fallback row
   from being posted as the current value on `May 22`.
+- If production is behind by more than one trading day, the updater may catch up
+  by accepting the next trading day after production's current latest row before
+  requiring the newest expected date. For example, if production is on `May 20`
+  and expected is `May 22`, a valid `May 21` source row can still be posted.
+- The updater must filter non-date table rows such as `Total` before posting to
+  `/api/admin/etf-flows`; the admin endpoint rejects invalid manual dates.
 - The workflow runs `python scripts/update_etf_flows.py`.
 - Required GitHub repository secret: `ETF_ADMIN_TOKEN`. Use the same value as
   Railway `ETF_ADMIN_TOKEN`.

@@ -225,6 +225,7 @@ def test_fear_greed_route_returns_stable_json_when_service_fails(monkeypatch, tm
     body = response.get_json()
     assert body["value"] == "N/A"
     assert body["classification"] == "N/A"
+    assert body["historical"] == {}
     assert body["source_label"] == "Alternative.me"
     assert body["status"] == "error"
     assert body["error"] == "boom"
@@ -619,7 +620,7 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Recent Alerts" in html
     assert "recentAlertBox" in html
     assert "dashboard.js" in html
-    assert "20260522-1" in html
+    assert "20260523-1" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
     assert 'property="og:title"' in html
     assert 'name="twitter:card"' in html

@@ -67,7 +67,7 @@ FARSIDE_BTC_ETF_LATEST_URL = "https://farside.co.uk/btc/"
 BITBO_BTC_ETF_FLOW_URL = "https://bitbo.io/treasuries/etf-flows/"
 WALLETPILOT_BTC_ETF_URL = "https://www.walletpilot.com/bitcoin-tracker/etfs"
 GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flows"
-ALTERNATIVE_FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1&format=json"
+ALTERNATIVE_FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=30&format=json"
 BUNDLED_ETF_FLOW_PATH = BASE_DIR / "data/etf_flows.json"
 COINGECKO_TREASURY_URLS = (
     "https://api.coingecko.com/api/v3/entities/public_treasury/bitcoin",
@@ -141,6 +141,7 @@ FALLBACK_BTC_TREASURY = {
 FALLBACK_FEAR_GREED = {
     "value": "N/A",
     "classification": "N/A",
+    "historical": {},
     "source": "alternative.me",
     "source_label": "Alternative.me",
     "status": "error",
@@ -2153,7 +2154,28 @@ def _get_fear_greed_from_alternative(settings: Settings) -> dict[str, Any]:
     rows = data.get("data") if isinstance(data, dict) else None
     if not isinstance(rows, list) or not rows:
         raise DataSourceError("Alternative.me Fear & Greed payload missing data")
-    row = rows[0]
+    latest = _normalize_fear_greed_row(rows[0])
+    historical = {
+        "now": latest,
+        "yesterday": _normalize_fear_greed_row(rows[1]) if len(rows) > 1 else {},
+        "last_week": _normalize_fear_greed_row(rows[7]) if len(rows) > 7 else {},
+        "last_month": _normalize_fear_greed_row(rows[29]) if len(rows) > 29 else {},
+    }
+    return {
+        "value": latest["value"],
+        "classification": latest["classification"],
+        "historical": historical,
+        "source": "alternative.me",
+        "source_label": "Alternative.me",
+        "status": "ok",
+        "updated_at": "",
+        "data_timestamp": latest["data_timestamp"],
+        "data_note": "Crypto Fear & Greed Index loaded from Alternative.me.",
+        "error": "",
+    }
+
+
+def _normalize_fear_greed_row(row: Any) -> dict[str, Any]:
     if not isinstance(row, dict):
         raise DataSourceError("Alternative.me Fear & Greed row is invalid")
 
@@ -2161,18 +2183,10 @@ def _get_fear_greed_from_alternative(settings: Settings) -> dict[str, Any]:
     if value is None:
         raise DataSourceError("Alternative.me Fear & Greed value is invalid")
 
-    timestamp = _parse_unix_timestamp(row.get("timestamp"))
-    classification = str(row.get("value_classification") or "N/A").strip() or "N/A"
     return {
         "value": int(value) if value.is_integer() else round(value, 1),
-        "classification": classification,
-        "source": "alternative.me",
-        "source_label": "Alternative.me",
-        "status": "ok",
-        "updated_at": "",
-        "data_timestamp": timestamp,
-        "data_note": "Crypto Fear & Greed Index loaded from Alternative.me.",
-        "error": "",
+        "classification": str(row.get("value_classification") or "N/A").strip() or "N/A",
+        "data_timestamp": _parse_unix_timestamp(row.get("timestamp")),
     }
 
 

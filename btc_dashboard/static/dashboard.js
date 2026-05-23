@@ -509,22 +509,41 @@ function fearGreedClass(value) {
     return "text-green-400";
 }
 
+function fearGreedChip(row) {
+    const value = valueOrNA(row?.value);
+    const label = valueOrNA(row?.classification);
+    return value === "N/A" ? "N/A" : `${value} ${label}`;
+}
+
 function renderFearGreed(data) {
     const value = valueOrNA(data?.value);
     const classification = valueOrNA(data?.classification);
     const source = data?.source_label ?? data?.source ?? "Alternative.me";
     const timestamp = data?.data_timestamp ? ` | Data: ${formatDateTime(data.data_timestamp)}` : "";
     const status = data?.status === "stale" ? "Stale" : data?.status === "ok" ? "Daily" : "N/A";
+    const historical = data?.historical ?? {};
     const valueEl = document.getElementById("fearGreedValue");
     const labelEl = document.getElementById("fearGreedLabel");
     const sourceEl = document.getElementById("fearGreedSource");
     const statusEl = document.getElementById("fearGreedStatus");
+    const markerEl = document.getElementById("fearGreedMarker");
+    const yesterdayEl = document.getElementById("fearGreedYesterday");
+    const weekEl = document.getElementById("fearGreedWeek");
+    const monthEl = document.getElementById("fearGreedMonth");
     if (valueEl) {
         valueEl.textContent = value;
-        valueEl.className = `mt-2 text-3xl font-bold ${fearGreedClass(value)}`;
+        valueEl.className = `text-2xl font-bold ${fearGreedClass(value)}`;
     }
     if (labelEl) labelEl.textContent = classification;
     if (sourceEl) sourceEl.textContent = `Source: ${source}${timestamp}`;
+    if (markerEl) {
+        const numeric = Number(value);
+        const pct = Number.isFinite(numeric) ? Math.min(100, Math.max(0, numeric)) : 50;
+        markerEl.style.marginLeft = `calc(${pct}% - 2px)`;
+    }
+    if (yesterdayEl) yesterdayEl.textContent = fearGreedChip(historical.yesterday);
+    if (weekEl) weekEl.textContent = fearGreedChip(historical.last_week);
+    if (monthEl) monthEl.textContent = fearGreedChip(historical.last_month);
     if (statusEl) {
         statusEl.textContent = status;
         statusEl.className = data?.status === "ok"

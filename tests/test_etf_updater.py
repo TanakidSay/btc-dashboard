@@ -14,7 +14,9 @@ def test_build_manual_payload_keeps_numeric_rows_only() -> None:
             "source": "farside",
             "latest_date": "2026-05-18",
             "flow_history": [
+                {"date": "Total", "net_flow_usd": "999000000"},
                 {"date": "2026-05-17", "net_flow_usd": "N/A"},
+                {"date": "Not a date", "net_flow_usd": "45000000"},
                 {"date": "2026-05-18", "net_flow_usd": "123000000", "close_price": "95000"},
             ],
         },
@@ -153,6 +155,53 @@ def test_main_continues_when_current_etf_check_is_blocked(monkeypatch, capsys) -
         {"date": "2026-05-18", "net_flow_usd": 123_000_000.0},
     ]
     assert "Current ETF check failed; continuing" in capsys.readouterr().err
+
+
+def test_minimum_acceptable_latest_date_allows_catch_up() -> None:
+    assert update_etf_flows.minimum_acceptable_latest_date(
+        datetime(2026, 5, 22, tzinfo=UTC).date(),
+        "2026-05-20",
+    ).isoformat() == "2026-05-21"
+
+
+def test_main_allows_next_missing_day_before_expected(monkeypatch) -> None:
+    posted = {}
+    minimum_dates = []
+
+    monkeypatch.setattr(update_etf_flows.Settings, "from_env", lambda: object())
+    monkeypatch.setattr(
+        update_etf_flows,
+        "get_current_latest_date",
+        lambda base_url, timeout: "2026-05-20",
+    )
+
+    def fake_fetch_live_etf_flow(settings, *, minimum_latest_date=None):
+        minimum_dates.append(minimum_latest_date)
+        return {
+            "source": "bitbo",
+            "latest_date": "2026-05-21",
+            "flow_history": [{"date": "2026-05-21", "net_flow_usd": -103_700_000}],
+        }
+
+    def fake_post_admin(base_url: str, token: str, payload: dict, timeout: int) -> dict:
+        posted.update({"base_url": base_url, "payload": payload})
+        return {
+            "ok": True,
+            "latest_date": "2026-05-21",
+            "latest_net_flow_usd": -103_700_000,
+            "source_label": "Manual",
+        }
+
+    monkeypatch.setattr(update_etf_flows, "fetch_live_etf_flow", fake_fetch_live_etf_flow)
+    monkeypatch.setattr(update_etf_flows, "post_admin_payload", fake_post_admin)
+    monkeypatch.setenv("ETF_ADMIN_TOKEN", "secret-token")
+
+    assert update_etf_flows.main(["--expected-date", "2026-05-22"]) == 0
+
+    assert minimum_dates == [datetime(2026, 5, 21, tzinfo=UTC).date()]
+    assert posted["payload"]["flow_history"] == [
+        {"date": "2026-05-21", "net_flow_usd": -103_700_000.0},
+    ]
 
 
 def test_expected_previous_us_trading_date_uses_bangkok_date() -> None:

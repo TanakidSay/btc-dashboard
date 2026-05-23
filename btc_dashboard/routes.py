@@ -299,6 +299,7 @@ def api_fear_greed():
         return jsonify({
             "value": "N/A",
             "classification": "N/A",
+            "historical": {},
             "source": "alternative.me",
             "source_label": "Alternative.me",
             "status": "error",

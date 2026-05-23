@@ -87,6 +87,9 @@ def test_frontend_renders_lightweight_fear_greed_card() -> None:
 
     assert "Fear &amp; Greed" in dashboard_html
     assert "fearGreedValue" in dashboard_html
+    assert "fearGreedMarker" in dashboard_html
+    assert "fearGreedYesterday" in dashboard_html
     assert 'fetchJson("/api/fear-greed")' in dashboard_js
     assert "renderFearGreed" in dashboard_js
+    assert "historical.last_week" in dashboard_js
     assert 'startRefreshJob("fear-greed", refreshFearGreed, 60 * 60 * 1000)' in dashboard_js

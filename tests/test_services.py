@@ -960,10 +960,11 @@ def test_get_fear_greed_index_parses_alternative_me(monkeypatch, tmp_path) -> No
         return FakeResponse({
             "data": [
                 {
-                    "value": "72",
-                    "value_classification": "Greed",
-                    "timestamp": "1779417600",
+                    "value": str(72 - index),
+                    "value_classification": "Greed" if index < 10 else "Fear",
+                    "timestamp": str(1779417600 - (index * 86400)),
                 }
+                for index in range(30)
             ]
         })
 
@@ -977,6 +978,9 @@ def test_get_fear_greed_index_parses_alternative_me(monkeypatch, tmp_path) -> No
     assert payload["status"] == "ok"
     assert payload["data_timestamp"].endswith("Z")
     assert payload["updated_at"]
+    assert payload["historical"]["yesterday"]["value"] == 71
+    assert payload["historical"]["last_week"]["value"] == 65
+    assert payload["historical"]["last_month"]["value"] == 43
 
 
 def test_get_fear_greed_index_returns_safe_fallback(monkeypatch, tmp_path) -> None:

@@ -39,8 +39,9 @@ fallback; local Bitcoin Core peer connections are not shown as global nodes.
 Ownership analytics are intentionally transparent: pseudonymous or research-only
 buckets are marked as estimates or limited-visibility values instead of precise
 live ownership facts.
-The small Fear & Greed card uses Alternative.me as a daily sentiment source and
-is cached for 24 hours so it does not add meaningful load to the dashboard.
+The small Fear & Greed card uses Alternative.me as a daily sentiment source,
+shows a compact sentiment gauge with recent historical values, and is cached for
+24 hours so it does not add meaningful load to the dashboard.
 
 The latest worker-populated metrics are exposed at:
 
