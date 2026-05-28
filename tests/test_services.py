@@ -2038,3 +2038,38 @@ def test_get_etf_flow_ignores_sosovalue_same_day_zero_placeholder(
     assert payload["latest_date"] == "2026-05-27"
     assert payload["latest_net_flow_usd"] == -193_000_000.0
     assert payload["trend"] == "outflow"
+
+
+def test_get_etf_flow_ignores_sosovalue_previous_day_zero_placeholder(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        if "farside.co.uk" in url:
+            return FakeResponse(status_code=403)
+        return FakeResponse(status_code=503)
+
+    def fake_post(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse({
+            "code": 0,
+            "msg": None,
+            "data": {
+                "list": [
+                    {"date": "2026-05-27", "totalNetInflow": -193_000_000.0},
+                    {"date": "2026-05-28", "totalNetInflow": 0.0},
+                ]
+            },
+        })
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services.session.post", fake_post)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 29, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path, sosovalue_api_key="test-key"))
+
+    assert payload["source"] == "sosovalue"
+    assert payload["latest_date"] == "2026-05-27"
+    assert payload["latest_net_flow_usd"] == -193_000_000.0

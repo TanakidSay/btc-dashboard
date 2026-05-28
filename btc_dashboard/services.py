@@ -1431,7 +1431,8 @@ def _drop_unconfirmed_latest_zero_etf_row(
     latest_flow = _to_float_or_none(latest.get("net_flow_usd"))
     if latest_date is None or latest_flow != 0:
         return history
-    if latest_date >= _utc_now_dt().date():
+    age_days = (_utc_now_dt().date() - latest_date).days
+    if 0 <= age_days <= 1:
         logger.warning(
             "%s ETF flow latest row is zero for %s; treating it as an unconfirmed placeholder",
             source_label,
