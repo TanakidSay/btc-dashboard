@@ -110,6 +110,20 @@ def test_health_alias_stays_public_when_auth_is_enabled(monkeypatch, tmp_path) -
     assert response.status_code == 200
 
 
+def test_seo_static_routes_stay_public_when_auth_is_enabled(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, dashboard_api_token="token-123"))
+
+    robots = app.test_client().get("/robots.txt")
+    sitemap = app.test_client().get("/sitemap.xml")
+
+    assert robots.status_code == 200
+    assert "Sitemap: https://btcwindow.uk/sitemap.xml" in robots.text
+    assert "Disallow: /api/" in robots.text
+    assert sitemap.status_code == 200
+    assert "<loc>https://btcwindow.uk/</loc>" in sitemap.text
+
+
 def test_railway_host_redirects_to_canonical_domain(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path))
@@ -639,10 +653,15 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Recent Alerts" in html
     assert "recentAlertBox" in html
     assert "dashboard.js" in html
-    assert "20260523-1" in html
+    assert "20260528-1" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
+    assert 'rel="canonical"' in html
     assert 'property="og:title"' in html
+    assert 'property="og:image"' in html
     assert 'name="twitter:card"' in html
+    assert 'name="twitter:image"' in html
+    assert 'type="application/ld+json"' in html
+    assert "FinanceApplication" in html
 
 
 def test_frontend_includes_generational_wealth_branding_asset() -> None:

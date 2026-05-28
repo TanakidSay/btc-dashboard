@@ -102,8 +102,10 @@ The app is designed to tolerate external data-source failures:
   does not collapse to zero between refreshes.
 - Node count uses Bitnodes as a global reachable-node snapshot.
 - Fear & Greed is a compact sentiment gauge card sourced from Alternative.me. It
-  uses daily data, shows recent historical values, is cached for 24 hours, and
-  should stay lightweight rather than becoming another heavy signal section.
+  uses daily data and shows recent historical values, but the backend cache TTL
+  is 1 hour so BTC Window does not lag Alternative.me by most of a day after the
+  source publishes a new value. Keep it lightweight rather than turning it into
+  another heavy signal section.
 - ETF flow uses Farside first when available. If API keys are configured, it can
   use CoinGlass and SoSoValue. If those sources are unavailable, it uses the
   manual ETF JSON file before public fallback scrapes and seeded estimates.
@@ -187,6 +189,10 @@ CANONICAL_REDIRECT_HOSTS=btcwindow.up.railway.app
 - Production is currently fronted by Cloudflare. Cloudflare should cache static
   assets under `/static/*` only; do not cache `/api/*` because price, ETF, and
   viewer metrics must remain fresh.
+- Basic SEO should remain lightweight: dashboard HTML includes canonical,
+  Open Graph/Twitter image metadata, and a small JSON-LD WebApplication block.
+  `/robots.txt` and `/sitemap.xml` are public static-style routes and should not
+  call external data sources.
 - When changing `btc_dashboard/static/dashboard.js`, bump the `v=` cache-buster
   in `btc_dashboard/templates/dashboard.html`; otherwise Cloudflare/browser
   static caching can serve old JavaScript while new HTML is already deployed.
@@ -305,6 +311,9 @@ Automatic ETF update notes:
   bot checks on the public domain for the admin update.
 - Optional GitHub repository secrets: `COINGLASS_API_KEY`,
   `SOSOVALUE_API_KEY`.
+- SoSoValue can expose a same-day `0` row before ETF flow data is finalized.
+  Treat a latest same-day zero row as an unconfirmed placeholder and keep the
+  previous confirmed row instead of labeling `$0.00` as live flow.
 - The updater fetches live/public ETF rows from the GitHub runner, converts them
   to the manual admin payload, and posts to `/api/admin/etf-flows`. Source order
   includes Farside direct first, then a Farside reader fallback via

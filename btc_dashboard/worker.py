@@ -75,7 +75,7 @@ _METRIC_INTERVALS = {
     "treasury": 60 * 60,
     "ownership": 60 * 60,
     "etf": 60 * 60,
-    "fear_greed": 24 * 60 * 60,
+    "fear_greed": 60 * 60,
     "network": 30 * 60,
     "security": 30 * 60,
     "daily_x_post": 60,

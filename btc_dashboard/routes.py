@@ -4,7 +4,7 @@ import datetime as dt
 from hmac import compare_digest
 
 import pandas as pd
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
 
 from .config import Settings
 from .services import (
@@ -45,6 +45,12 @@ def _utc_now_iso() -> str:
     return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _canonical_origin() -> str:
+    settings = _settings()
+    host = (settings.canonical_host or request.host).strip().rstrip("/")
+    return f"https://{host}"
+
+
 @api.route("/")
 def index():
     record_view(
@@ -56,7 +62,41 @@ def index():
         request.headers.get("CF-IPCountry") or request.headers.get("X-Country-Code"),
     )
     data = snapshot()
-    return render_template("dashboard.html", table=data["table_html"])
+    origin = _canonical_origin()
+    return render_template(
+        "dashboard.html",
+        canonical_url=f"{origin}/",
+        og_image_url=f"{origin}{url_for('static', filename='generational-mascot.webp')}",
+        table=data["table_html"],
+    )
+
+
+@api.route("/robots.txt")
+def robots_txt():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        f"Sitemap: {_canonical_origin()}/sitemap.xml\n"
+    )
+    return Response(body, mimetype="text/plain")
+
+
+@api.route("/sitemap.xml")
+def sitemap_xml():
+    today = dt.datetime.now(dt.UTC).date().isoformat()
+    body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>{_canonical_origin()}/</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
+"""
+    return Response(body, mimetype="application/xml")
+
 
 
 def _empty_fee_response():

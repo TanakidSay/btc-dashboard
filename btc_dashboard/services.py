@@ -55,7 +55,7 @@ HASHRATE_TTL_SECONDS = 10 * 60
 NODE_COUNT_TTL_SECONDS = 30 * 60
 INSTITUTIONAL_TTL_SECONDS = 60 * 60
 TREASURY_TTL_SECONDS = 24 * 60 * 60
-FEAR_GREED_TTL_SECONDS = 24 * 60 * 60
+FEAR_GREED_TTL_SECONDS = 60 * 60
 SECURITY_TTL_SECONDS = 30 * 60
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
@@ -1410,12 +1410,35 @@ def _get_etf_flow_from_sosovalue(settings: Settings) -> dict[str, Any]:
                 ),
                 "close_price": None,
             })
+        history = _drop_unconfirmed_latest_zero_etf_row(history, "SoSoValue")
         return _normalize_etf_payload(history, "sosovalue")
     except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
         logger.warning("SoSoValue ETF flow request failed: %s", exc)
         fallback = FALLBACK_ETF_FLOW.copy()
         fallback["error"] = str(exc)
         return fallback
+
+
+def _drop_unconfirmed_latest_zero_etf_row(
+    history: list[dict[str, Any]],
+    source_label: str,
+) -> list[dict[str, Any]]:
+    if len(history) < 2:
+        return history
+    sorted_history = sorted(history, key=_etf_sort_key)
+    latest = sorted_history[-1]
+    latest_date = _parse_etf_date(str(latest.get("date") or ""))
+    latest_flow = _to_float_or_none(latest.get("net_flow_usd"))
+    if latest_date is None or latest_flow != 0:
+        return history
+    if latest_date >= _utc_now_dt().date():
+        logger.warning(
+            "%s ETF flow latest row is zero for %s; treating it as an unconfirmed placeholder",
+            source_label,
+            latest_date.isoformat(),
+        )
+        return sorted_history[:-1]
+    return history
 
 
 def _get_etf_flow_from_coinglass(settings: Settings) -> dict[str, Any]:

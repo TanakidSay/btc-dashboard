@@ -43,7 +43,12 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.before_request
     def require_dashboard_auth():
         if (
-            request.endpoint in {"api.healthz", "api.api_admin_etf_flows"}
+            request.endpoint in {
+                "api.healthz",
+                "api.api_admin_etf_flows",
+                "api.robots_txt",
+                "api.sitemap_xml",
+            }
             or not settings.dashboard_auth_enabled
         ):
             return None

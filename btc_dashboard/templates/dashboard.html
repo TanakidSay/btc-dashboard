@@ -4,24 +4,39 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>BTC Window | Bitcoin Fees, ETF Flow & Network Health</title>
+    <link rel="canonical" href="{{ canonical_url }}">
     <meta
         name="description"
         content="BTC Window tracks Bitcoin fees, network health, ETF flow, treasury holdings, and long-term BTC market signals in one lightweight dashboard."
     >
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="BTC Window">
-    <meta property="og:url" content="https://btcwindow.uk/">
+    <meta property="og:url" content="{{ canonical_url }}">
     <meta property="og:title" content="BTC Window | Bitcoin Fees, ETF Flow & Network Health">
     <meta
         property="og:description"
         content="Track Bitcoin fees, network health, ETF flow, treasury holdings, and long-term BTC signals in one lightweight dashboard."
     >
-    <meta name="twitter:card" content="summary">
+    <meta property="og:image" content="{{ og_image_url }}">
+    <meta property="og:image:alt" content="BTC Window Bitcoin dashboard preview">
+    <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="BTC Window | Bitcoin Fees, ETF Flow & Network Health">
     <meta
         name="twitter:description"
         content="Track Bitcoin fees, network health, ETF flow, treasury holdings, and long-term BTC signals in one lightweight dashboard."
     >
+    <meta name="twitter:image" content="{{ og_image_url }}">
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "BTC Window",
+        "url": "{{ canonical_url }}",
+        "applicationCategory": "FinanceApplication",
+        "operatingSystem": "Web",
+        "description": "BTC Window tracks Bitcoin fees, network health, ETF flow, treasury holdings, and long-term BTC market signals in one lightweight dashboard."
+    }
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -390,6 +405,6 @@
         </p>
     </footer>
 </main>
-<script src="{{ url_for('static', filename='dashboard.js', v='20260523-1') }}"></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='20260528-1') }}"></script>
 </body>
 </html>
