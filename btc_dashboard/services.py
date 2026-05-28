@@ -1410,7 +1410,6 @@ def _get_etf_flow_from_sosovalue(settings: Settings) -> dict[str, Any]:
                 ),
                 "close_price": None,
             })
-        history = _drop_unconfirmed_latest_zero_etf_row(history, "SoSoValue")
         return _normalize_etf_payload(history, "sosovalue")
     except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
         logger.warning("SoSoValue ETF flow request failed: %s", exc)
@@ -1430,6 +1429,11 @@ def _drop_unconfirmed_latest_zero_etf_row(
     latest_date = _parse_etf_date(str(latest.get("date") or ""))
     latest_flow = _to_float_or_none(latest.get("net_flow_usd"))
     if latest_date is None or latest_flow != 0:
+        return history
+    has_confirmed_previous_flow = any(
+        (_to_float_or_none(row.get("net_flow_usd")) or 0) != 0 for row in sorted_history[:-1]
+    )
+    if not has_confirmed_previous_flow:
         return history
     age_days = (_utc_now_dt().date() - latest_date).days
     if 0 <= age_days <= 1:
@@ -1794,6 +1798,8 @@ def _normalize_etf_payload(
     if not history:
         raise ValueError("ETF history is empty")
     history = sorted(history, key=_etf_sort_key)
+    if not is_fallback and source != "manual":
+        history = _drop_unconfirmed_latest_zero_etf_row(history, source)
     latest_row = history[-1]
     latest_flow = float(latest_row.get("net_flow_usd", 0) or 0)
     latest_date = str(latest_row.get("date") or "")

@@ -311,10 +311,10 @@ Automatic ETF update notes:
   bot checks on the public domain for the admin update.
 - Optional GitHub repository secrets: `COINGLASS_API_KEY`,
   `SOSOVALUE_API_KEY`.
-- SoSoValue can expose a latest `0` row before ETF flow data is finalized.
-  Treat a latest zero row from today or yesterday UTC as an unconfirmed
-  placeholder and keep the previous confirmed row instead of labeling `$0.00`
-  as live flow.
+- Live/public ETF sources can expose a latest `0` row before ETF flow data is
+  finalized. Treat a latest zero row from today or yesterday UTC as an
+  unconfirmed placeholder when there is a previous non-zero row, and keep the
+  previous confirmed row instead of labeling `$0.00` as live flow.
 - The updater fetches live/public ETF rows from the GitHub runner, converts them
   to the manual admin payload, and posts to `/api/admin/etf-flows`. Source order
   includes Farside direct first, then a Farside reader fallback via

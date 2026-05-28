@@ -2073,3 +2073,24 @@ def test_get_etf_flow_ignores_sosovalue_previous_day_zero_placeholder(
     assert payload["source"] == "sosovalue"
     assert payload["latest_date"] == "2026-05-27"
     assert payload["latest_net_flow_usd"] == -193_000_000.0
+
+
+def test_normalize_live_etf_payload_uses_previous_nonzero_row_for_latest_zero(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 5, 29, tzinfo=UTC),
+    )
+
+    payload = _normalize_etf_payload(
+        [
+            {"date": "2026-05-27", "net_flow_usd": -193_000_000.0},
+            {"date": "2026-05-28", "net_flow_usd": 0.0},
+        ],
+        "farside-latest",
+    )
+
+    assert payload["source"] == "farside-latest"
+    assert payload["latest_date"] == "2026-05-27"
+    assert payload["latest_net_flow_usd"] == -193_000_000.0
