@@ -320,6 +320,44 @@ def test_record_view_groups_youtube_and_tiktok_referrers(tmp_path) -> None:
     assert analytics["referrers"]["vm.tiktok.com"] == 1
 
 
+def test_viewer_analytics_reports_unique_today_unique_7d_and_returning_rate(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = _settings(tmp_path)
+    base = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    def set_now(days_ago: int, seconds: int = 0) -> None:
+        current = base - timedelta(days=days_ago) + timedelta(seconds=seconds)
+        monkeypatch.setattr("btc_dashboard.services.time.time", lambda: current.timestamp())
+
+    set_now(31)
+    record_view(settings, "203.0.113.14", "Chrome", None, "/", "DE")
+    set_now(7)
+    record_view(settings, "203.0.113.13", "Edge", None, "/", "GB")
+    set_now(6)
+    record_view(settings, "203.0.113.12", "Safari", None, "/", "JP")
+    set_now(1)
+    record_view(settings, "203.0.113.10", "Chrome", None, "/", "TH")
+    set_now(0)
+    record_view(settings, "203.0.113.10", "Chrome", None, "/", "TH")
+    set_now(0, 61)
+    record_view(settings, "203.0.113.11", "Firefox", None, "/", "US")
+
+    set_now(0, 120)
+    analytics = get_viewer_analytics(settings)
+
+    assert analytics["unique_today"] == 2
+    assert analytics["unique_7d"] == 3
+    assert analytics["returning_visitors"] == 1
+    assert analytics["returning_rate"] == "33.3%"
+    assert analytics["total_events"] == 6
+
+    stored = json.loads(settings.viewer_analytics_path.read_text(encoding="utf-8"))
+    assert len(stored["visitor_events"]) == 5
+    assert "203.0.113" not in json.dumps(stored)
+
+
 def test_viewer_analytics_suppresses_duplicate_events_within_dedupe_window(
     monkeypatch,
     tmp_path,

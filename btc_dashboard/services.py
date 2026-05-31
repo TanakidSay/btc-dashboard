@@ -8,7 +8,7 @@ import time
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from html import unescape
 from pathlib import Path
 from threading import Lock
@@ -57,6 +57,7 @@ INSTITUTIONAL_TTL_SECONDS = 60 * 60
 TREASURY_TTL_SECONDS = 24 * 60 * 60
 FEAR_GREED_TTL_SECONDS = 60 * 60
 SECURITY_TTL_SECONDS = 30 * 60
+VIEWER_ANALYTICS_RETENTION_DAYS = 30
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
 BINANCE_BTC_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
@@ -272,6 +273,7 @@ DEFAULT_VIEWER_ANALYTICS = {
     "paths": {},
     "recent": [],
     "recent_fingerprints": {},
+    "visitor_events": [],
 }
 
 
@@ -381,6 +383,8 @@ def get_viewer_stats(settings: Settings) -> dict[str, Any]:
 def get_viewer_analytics(settings: Settings) -> dict[str, Any]:
     with _viewer_lock:
         analytics = _load_viewer_analytics(settings.viewer_analytics_path)
+        _prune_viewer_events(analytics, _viewer_today_utc())
+        _save_viewer_analytics(settings.viewer_analytics_path, analytics)
     return _public_viewer_analytics(analytics)
 
 
@@ -417,7 +421,7 @@ def record_view(
         if visitor_key not in stats["known_visitors"]:
             stats["known_visitors"].append(visitor_key)
         stats["unique_visitors"] = len(stats["known_visitors"])
-        stats["last_viewed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        stats["last_viewed_at"] = _viewer_now_iso()
         _save_viewer_stats(settings.viewer_stats_path, stats)
         analytics = _load_viewer_analytics(settings.viewer_analytics_path)
         _record_viewer_analytics(
@@ -608,9 +612,12 @@ def _load_viewer_analytics(path: Path) -> dict[str, Any]:
         merged["recent"] = []
     if not isinstance(merged.get("recent_fingerprints"), dict):
         merged["recent_fingerprints"] = {}
+    if not isinstance(merged.get("visitor_events"), list):
+        merged["visitor_events"] = []
     merged["total_events"] = max(int(merged.get("total_events") or 0), 0)
     merged["suppressed_events"] = max(int(merged.get("suppressed_events") or 0), 0)
     merged["dedupe_window_seconds"] = max(int(merged.get("dedupe_window_seconds") or 60), 1)
+    _prune_viewer_events(merged, _viewer_today_utc())
     return merged
 
 
@@ -666,6 +673,43 @@ def _record_viewer_analytics(
             "path": safe_path,
         }
     ]
+    _record_viewer_event(
+        analytics,
+        visitor_key=visitor_key,
+        viewed_at=viewed_at,
+        source=source,
+        referrer=referrer_host,
+        device=device,
+        browser=browser,
+        country=country_code,
+        path=safe_path,
+    )
+
+
+def _record_viewer_event(
+    analytics: dict[str, Any],
+    visitor_key: str,
+    viewed_at: str | None,
+    source: str,
+    referrer: str,
+    device: str,
+    browser: str,
+    country: str,
+    path: str,
+) -> None:
+    analytics["visitor_events"] = (analytics.get("visitor_events") or []) + [
+        {
+            "visitor": visitor_key,
+            "viewed_at": viewed_at,
+            "source": source,
+            "referrer": referrer,
+            "device": device,
+            "browser": browser,
+            "country": country,
+            "path": path,
+        },
+    ]
+    _prune_viewer_events(analytics, _viewer_today_utc())
 
 
 def _viewer_analytics_fingerprint(visitor_key: str, source: str, path: str) -> str:
@@ -679,6 +723,63 @@ def _prune_viewer_fingerprints(
     dedupe_window_seconds: int,
 ) -> None:
     _prune_fingerprints(analytics["recent_fingerprints"], now, dedupe_window_seconds)
+
+
+def _prune_viewer_events(analytics: dict[str, Any], today: date) -> None:
+    cutoff = today - timedelta(days=VIEWER_ANALYTICS_RETENTION_DAYS - 1)
+    analytics["visitor_events"] = [
+        event
+        for event in analytics.get("visitor_events") or []
+        if (event_date := _viewer_event_date(event)) is not None and event_date >= cutoff
+    ]
+
+
+def _viewer_retention_metrics(analytics: dict[str, Any]) -> dict[str, Any]:
+    today = _viewer_today_utc()
+    start_7d = today - timedelta(days=6)
+    visitor_days: dict[str, set[date]] = {}
+
+    for event in analytics.get("visitor_events") or []:
+        visitor = str(event.get("visitor") or "")
+        event_date = _viewer_event_date(event)
+        if not visitor or event_date is None or event_date < start_7d or event_date > today:
+            continue
+        visitor_days.setdefault(visitor, set()).add(event_date)
+
+    unique_today = sum(1 for days in visitor_days.values() if today in days)
+    unique_7d = len(visitor_days)
+    returning_visitors = sum(1 for days in visitor_days.values() if len(days) > 1)
+    returning_rate = returning_visitors / unique_7d * 100 if unique_7d else 0
+    return {
+        "unique_today": unique_today,
+        "unique_7d": unique_7d,
+        "returning_visitors": returning_visitors,
+        "returning_rate": f"{returning_rate:.1f}%",
+    }
+
+
+def _viewer_event_date(event: dict[str, Any]) -> date | None:
+    viewed_at = event.get("viewed_at")
+    if isinstance(viewed_at, str) and viewed_at:
+        try:
+            return datetime.fromisoformat(viewed_at.replace("Z", "+00:00")).date()
+        except ValueError:
+            pass
+    date_value = event.get("date")
+    if isinstance(date_value, str) and date_value:
+        try:
+            return datetime.fromisoformat(date_value).date()
+        except ValueError:
+            return None
+    return None
+
+
+def _viewer_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
+
+
+def _viewer_today_utc() -> date:
+    return datetime.fromtimestamp(time.time(), UTC).date()
 
 
 def _prune_fingerprints(
@@ -807,11 +908,13 @@ def _default_viewer_stats() -> dict[str, Any]:
 
 
 def _public_viewer_analytics(analytics: dict[str, Any]) -> dict[str, Any]:
+    retention = _viewer_retention_metrics(analytics)
     return {
         "total_events": analytics["total_events"],
         "suppressed_events": analytics["suppressed_events"],
         "dedupe_window_seconds": analytics["dedupe_window_seconds"],
         "last_viewed_at": analytics["last_viewed_at"],
+        **retention,
         "sources": analytics["sources"],
         "referrers": analytics["referrers"],
         "devices": analytics["devices"],

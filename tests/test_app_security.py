@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from base64 import b64encode
 from pathlib import Path
 
@@ -217,9 +218,14 @@ def test_viewer_analytics_endpoint_reports_aggregate_sources(monkeypatch, tmp_pa
     assert analytics_response.status_code == 200
     body = analytics_response.get_json()
     assert body["sources"]["x"] == 1
+    assert body["unique_today"] == 1
+    assert body["unique_7d"] == 1
+    assert body["returning_visitors"] == 0
+    assert body["returning_rate"] == "0.0%"
     assert body["devices"]["mobile"] == 1
     assert body["countries"]["TH"] == 1
     assert "privacy" in body
+    assert "203.0.113" not in json.dumps(body)
 
 
 def test_treasury_route_returns_stable_json_when_service_fails(monkeypatch, tmp_path) -> None:
