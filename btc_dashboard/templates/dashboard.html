@@ -358,7 +358,7 @@
         <p class="mt-1 leading-4 text-gray-400">Free Bitcoin dashboard. Tips help keep it running.</p>
 
         <div class="mt-2 flex max-w-full flex-col items-center rounded-md border border-gray-800 bg-gray-900/80 p-1.5">
-            <p class="mb-1 self-start text-[11px] font-semibold uppercase tracking-wide text-gray-400">Lightning</p>
+            <p class="mb-1 self-start text-[11px] font-semibold uppercase tracking-wide text-gray-400">⚡ LIGHTNING (Recommended)</p>
             <img
                 id="lightningQrImage"
                 class="hidden h-[104px] w-[104px] max-w-full rounded-md border border-gray-800 bg-white p-1 object-contain"
@@ -366,6 +366,18 @@
                 alt="Lightning donation QR"
             >
             <p id="lightningQrFallback" class="text-[11px] text-gray-500">Lightning QR coming soon</p>
+            <div class="mt-2 w-full">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Lightning Address</p>
+                <p id="lightningDonationAddress" class="mt-1 break-all text-[11px] font-medium text-gray-200">eternalgarlic86@walletofsatoshi.com</p>
+                <button
+                    id="copyLightningDonationAddress"
+                    type="button"
+                    class="mt-2 rounded-md border border-amber-500/30 bg-gray-950 px-2 py-1.5 text-[11px] font-semibold text-amber-100 hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    data-copy-target="lightningDonationAddress"
+                >
+                    Copy
+                </button>
+            </div>
         </div>
 
         <div class="mt-2 rounded-md border border-gray-800 bg-gray-900/80 p-2">

@@ -128,7 +128,7 @@ async function copyText(button, value) {
     try {
         await navigator.clipboard.writeText(value);
         const originalText = button.textContent;
-        button.textContent = "Copied";
+        button.textContent = "Copied!";
         window.setTimeout(() => { button.textContent = originalText; }, 1600);
     } catch (error) {
         console.error("Failed to copy donation value", error);
@@ -160,11 +160,13 @@ function initDonationBox() {
         }
     }
 
-    const copyButton = document.getElementById("copyBtcDonationAddress");
-    const addressEl = document.getElementById(copyButton?.dataset.copyTarget || "");
-    copyButton?.addEventListener("click", () => {
-        const address = addressEl?.textContent?.trim();
-        if (address) copyText(copyButton, address);
+    ["copyBtcDonationAddress", "copyLightningDonationAddress"].forEach((buttonId) => {
+        const copyButton = document.getElementById(buttonId);
+        const addressEl = document.getElementById(copyButton?.dataset.copyTarget || "");
+        copyButton?.addEventListener("click", () => {
+            const address = addressEl?.textContent?.trim();
+            if (address) copyText(copyButton, address);
+        });
     });
 }
 
