@@ -16,6 +16,7 @@ from .services import (
     get_btc_treasury_holdings,
     get_etf_flow,
     get_fear_greed_index,
+    get_privacy_safe_visitor_key,
     get_recent_whale_transactions,
     get_security_overview,
     get_viewer_analytics,
@@ -60,6 +61,8 @@ def index():
         request.headers.get("Referer"),
         request.path,
         request.headers.get("CF-IPCountry") or request.headers.get("X-Country-Code"),
+        request.headers.get("Accept-Language"),
+        get_privacy_safe_visitor_key(request),
     )
     data = snapshot()
     origin = _canonical_origin()

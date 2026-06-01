@@ -209,21 +209,35 @@ def test_viewer_analytics_endpoint_reports_aggregate_sources(monkeypatch, tmp_pa
         headers={
             "User-Agent": "Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Safari/604.1",
             "Referer": "https://x.com/BitcoinWindow",
+            "CF-Connecting-IP": "203.0.113.9",
             "CF-IPCountry": "TH",
+            "Accept-Language": "th-TH,th;q=0.9",
+        },
+    )
+    second_response = client.get(
+        "/",
+        headers={
+            "User-Agent": "Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Safari/604.1",
+            "Referer": "https://www.tiktok.com/@btcwindow/video/123",
+            "CF-Connecting-IP": "203.0.113.10",
+            "CF-IPCountry": "TH",
+            "Accept-Language": "th-TH,th;q=0.9",
         },
     )
     analytics_response = client.get("/api/viewer-analytics")
 
     assert response.status_code == 200
+    assert second_response.status_code == 200
     assert analytics_response.status_code == 200
     body = analytics_response.get_json()
     assert body["sources"]["x"] == 1
-    assert body["unique_today"] == 1
-    assert body["unique_7d"] == 1
+    assert body["sources"]["tiktok"] == 1
+    assert body["unique_today"] == 2
+    assert body["unique_7d"] == 2
     assert body["returning_visitors"] == 0
     assert body["returning_rate"] == "0.0%"
-    assert body["devices"]["mobile"] == 1
-    assert body["countries"]["TH"] == 1
+    assert body["devices"]["mobile"] == 2
+    assert body["countries"]["TH"] == 2
     assert "privacy" in body
     assert "203.0.113" not in json.dumps(body)
 

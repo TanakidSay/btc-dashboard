@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from collections import deque
@@ -23,6 +24,7 @@ from .config import BASE_DIR, Settings
 
 session = requests.Session()
 logger = logging.getLogger(__name__)
+_analytics_salt_warning_logged = False
 
 API_HEADERS = {"Accept": "application/json", "User-Agent": "btc-dashboard/0.1"}
 BROWSER_HEADERS = {
@@ -395,8 +397,15 @@ def record_view(
     referrer: str | None = None,
     path: str | None = None,
     country: str | None = None,
+    accept_language: str | None = None,
+    visitor_key: str | None = None,
 ) -> dict[str, Any]:
-    visitor_key = _viewer_key(remote_addr, user_agent)
+    visitor_key = visitor_key or _viewer_key(
+        remote_addr,
+        user_agent,
+        accept_language=accept_language,
+        country=country,
+    )
     with _viewer_lock:
         stats = _load_viewer_stats(settings.viewer_stats_path)
         stats = _ensure_unique_visitors_floor(
@@ -437,9 +446,48 @@ def record_view(
     return _public_viewer_stats(stats)
 
 
-def _viewer_key(remote_addr: str | None, user_agent: str | None) -> str:
-    fingerprint = f"{remote_addr or 'unknown'}|{user_agent or 'unknown'}"
+def get_privacy_safe_visitor_key(req) -> str:
+    forwarded_for = (req.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
+    remote_addr = (
+        req.headers.get("CF-Connecting-IP")
+        or forwarded_for
+        or req.remote_addr
+        or "unknown"
+    )
+    return _viewer_key(
+        remote_addr,
+        req.headers.get("User-Agent"),
+        accept_language=req.headers.get("Accept-Language"),
+        country=req.headers.get("CF-IPCountry") or req.headers.get("X-Country-Code"),
+    )
+
+
+def _viewer_key(
+    remote_addr: str | None,
+    user_agent: str | None,
+    *,
+    accept_language: str | None = None,
+    country: str | None = None,
+) -> str:
+    fingerprint = "|".join((
+        _analytics_salt(),
+        remote_addr or "unknown",
+        user_agent or "unknown",
+        accept_language or "unknown",
+        country or "unknown",
+    ))
     return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
+
+
+def _analytics_salt() -> str:
+    global _analytics_salt_warning_logged
+    salt = os.getenv("ANALYTICS_SALT")
+    if salt:
+        return salt
+    if not _analytics_salt_warning_logged:
+        logger.warning("ANALYTICS_SALT is not set; using stable fallback analytics salt")
+        _analytics_salt_warning_logged = True
+    return "btcwindow-stable-analytics-salt"
 
 
 def load_total_views(path: Path, fallback: int = 0) -> int:
@@ -699,7 +747,7 @@ def _record_viewer_event(
 ) -> None:
     analytics["visitor_events"] = (analytics.get("visitor_events") or []) + [
         {
-            "visitor": visitor_key,
+            "visitor_key": visitor_key,
             "viewed_at": viewed_at,
             "source": source,
             "referrer": referrer,
@@ -739,8 +787,8 @@ def _viewer_retention_metrics(analytics: dict[str, Any]) -> dict[str, Any]:
     start_7d = today - timedelta(days=6)
     visitor_days: dict[str, set[date]] = {}
 
-    for event in analytics.get("visitor_events") or []:
-        visitor = str(event.get("visitor") or "")
+    for event in _viewer_metric_events(analytics):
+        visitor = _viewer_metric_event_key(event)
         event_date = _viewer_event_date(event)
         if not visitor or event_date is None or event_date < start_7d or event_date > today:
             continue
@@ -756,6 +804,65 @@ def _viewer_retention_metrics(analytics: dict[str, Any]) -> dict[str, Any]:
         "returning_visitors": returning_visitors,
         "returning_rate": f"{returning_rate:.1f}%",
     }
+
+
+def _viewer_metric_events(analytics: dict[str, Any]) -> list[dict[str, Any]]:
+    events = [event for event in analytics.get("visitor_events") or [] if isinstance(event, dict)]
+    seen_signatures = {_viewer_event_signature(event) for event in events}
+    for event in analytics.get("recent") or []:
+        if not isinstance(event, dict):
+            continue
+        signature = _viewer_event_signature(event)
+        if signature in seen_signatures:
+            continue
+        events.append(event)
+        seen_signatures.add(signature)
+    return events
+
+
+def _viewer_metric_event_key(event: dict[str, Any]) -> str:
+    key = str(event.get("visitor_key") or event.get("visitor") or "").strip()
+    if key:
+        return key
+    event_date = _viewer_event_date(event)
+    if event_date is None:
+        return ""
+    bucket = _viewer_event_hour_bucket(event)
+    raw = "|".join((
+        "legacy",
+        str(event.get("country") or "unknown"),
+        str(event.get("browser") or "unknown"),
+        str(event.get("device") or "unknown"),
+        str(event.get("path") or "/"),
+        str(event.get("referrer") or "direct"),
+        str(event.get("source") or "direct"),
+        bucket,
+    ))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _viewer_event_signature(event: dict[str, Any]) -> str:
+    return "|".join((
+        str(event.get("viewed_at") or ""),
+        str(event.get("source") or ""),
+        str(event.get("referrer") or ""),
+        str(event.get("device") or ""),
+        str(event.get("browser") or ""),
+        str(event.get("country") or ""),
+        str(event.get("path") or ""),
+    ))
+
+
+def _viewer_event_hour_bucket(event: dict[str, Any]) -> str:
+    viewed_at = event.get("viewed_at")
+    if isinstance(viewed_at, str) and viewed_at:
+        try:
+            parsed = datetime.fromisoformat(viewed_at.replace("Z", "+00:00"))
+            return parsed.replace(minute=0, second=0, microsecond=0).isoformat()
+        except ValueError:
+            pass
+    event_date = _viewer_event_date(event)
+    return event_date.isoformat() if event_date else ""
 
 
 def _viewer_event_date(event: dict[str, Any]) -> date | None:

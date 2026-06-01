@@ -343,6 +343,8 @@ def test_viewer_analytics_reports_unique_today_unique_7d_and_returning_rate(
     record_view(settings, "203.0.113.10", "Chrome", None, "/", "TH")
     set_now(0, 61)
     record_view(settings, "203.0.113.11", "Firefox", None, "/", "US")
+    set_now(0, 122)
+    record_view(settings, "203.0.113.11", "Firefox", None, "/", "US")
 
     set_now(0, 120)
     analytics = get_viewer_analytics(settings)
@@ -351,11 +353,84 @@ def test_viewer_analytics_reports_unique_today_unique_7d_and_returning_rate(
     assert analytics["unique_7d"] == 3
     assert analytics["returning_visitors"] == 1
     assert analytics["returning_rate"] == "33.3%"
-    assert analytics["total_events"] == 6
+    assert analytics["total_events"] == 7
 
     stored = json.loads(settings.viewer_analytics_path.read_text(encoding="utf-8"))
-    assert len(stored["visitor_events"]) == 5
+    assert len(stored["visitor_events"]) == 6
+    assert "visitor_key" in stored["visitor_events"][0]
     assert "203.0.113" not in json.dumps(stored)
+
+
+def test_viewer_analytics_legacy_recent_rows_do_not_collapse_to_one_visitor(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = _settings(tmp_path)
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr("btc_dashboard.services.time.time", lambda: now.timestamp())
+    settings.viewer_analytics_path.write_text(
+        json.dumps({
+            "total_events": 4,
+            "suppressed_events": 0,
+            "dedupe_window_seconds": 60,
+            "last_viewed_at": "2026-06-01T11:00:00Z",
+            "sources": {"direct": 4},
+            "referrers": {"direct": 4},
+            "devices": {"desktop": 2, "mobile": 2},
+            "browsers": {"chrome": 2, "safari": 2},
+            "countries": {"TH": 2, "JP": 1, "US": 1},
+            "paths": {"/": 4},
+            "recent": [
+                {
+                    "viewed_at": "2026-06-01T08:15:00Z",
+                    "source": "direct",
+                    "referrer": "direct",
+                    "device": "desktop",
+                    "browser": "chrome",
+                    "country": "TH",
+                    "path": "/",
+                },
+                {
+                    "viewed_at": "2026-06-01T08:45:00Z",
+                    "source": "direct",
+                    "referrer": "direct",
+                    "device": "mobile",
+                    "browser": "safari",
+                    "country": "JP",
+                    "path": "/",
+                },
+                {
+                    "viewed_at": "2026-05-31T08:15:00Z",
+                    "source": "direct",
+                    "referrer": "direct",
+                    "device": "desktop",
+                    "browser": "chrome",
+                    "country": "TH",
+                    "path": "/",
+                },
+                {
+                    "viewed_at": "2026-05-30T09:00:00Z",
+                    "source": "direct",
+                    "referrer": "direct",
+                    "device": "mobile",
+                    "browser": "chrome",
+                    "country": "US",
+                    "path": "/",
+                },
+            ],
+            "recent_fingerprints": {},
+        }),
+        encoding="utf-8",
+    )
+
+    analytics = get_viewer_analytics(settings)
+
+    assert analytics["unique_today"] == 2
+    assert analytics["unique_7d"] == 4
+    assert analytics["returning_visitors"] == 0
+    assert analytics["returning_rate"] == "0.0%"
+    assert analytics["total_events"] == 4
+    assert "visitor_key" not in json.dumps(analytics)
 
 
 def test_viewer_analytics_suppresses_duplicate_events_within_dedupe_window(
