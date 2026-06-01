@@ -320,6 +320,43 @@ def test_record_view_groups_youtube_and_tiktok_referrers(tmp_path) -> None:
     assert analytics["referrers"]["vm.tiktok.com"] == 1
 
 
+def test_record_view_uses_allowed_source_hint_when_referrer_is_missing(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    record_view(
+        settings,
+        "203.0.113.30",
+        "Chrome",
+        None,
+        "/",
+        "TH",
+        source_hint="tiktok",
+    )
+    record_view(
+        settings,
+        "203.0.113.31",
+        "Chrome",
+        None,
+        "/",
+        "TH",
+        source_hint="youtube",
+    )
+    record_view(
+        settings,
+        "203.0.113.32",
+        "Chrome",
+        None,
+        "/",
+        "TH",
+        source_hint="newsletter",
+    )
+
+    analytics = get_viewer_analytics(settings)
+
+    assert analytics["sources"] == {"tiktok": 1, "youtube": 1, "direct": 1}
+    assert analytics["referrers"]["direct"] == 3
+
+
 def test_viewer_analytics_reports_unique_today_unique_7d_and_returning_rate(
     monkeypatch,
     tmp_path,

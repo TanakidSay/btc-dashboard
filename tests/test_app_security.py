@@ -242,6 +242,29 @@ def test_viewer_analytics_endpoint_reports_aggregate_sources(monkeypatch, tmp_pa
     assert "203.0.113" not in json.dumps(body)
 
 
+def test_index_records_utm_source_when_referrer_is_missing(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path))
+    client = app.test_client()
+
+    response = client.get(
+        "/?utm_source=youtube",
+        headers={
+            "User-Agent": "Mozilla/5.0 Chrome/124",
+            "CF-Connecting-IP": "203.0.113.20",
+            "CF-IPCountry": "TH",
+        },
+    )
+    analytics_response = client.get("/api/viewer-analytics")
+
+    assert response.status_code == 200
+    assert analytics_response.status_code == 200
+    body = analytics_response.get_json()
+    assert body["sources"] == {"youtube": 1}
+    assert body["referrers"] == {"direct": 1}
+    assert "203.0.113" not in json.dumps(body)
+
+
 def test_treasury_route_returns_stable_json_when_service_fails(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     monkeypatch.setattr(

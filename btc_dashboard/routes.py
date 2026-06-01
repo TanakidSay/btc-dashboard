@@ -63,6 +63,7 @@ def index():
         request.headers.get("CF-IPCountry") or request.headers.get("X-Country-Code"),
         request.headers.get("Accept-Language"),
         get_privacy_safe_visitor_key(request),
+        request.args.get("utm_source") or request.args.get("source"),
     )
     data = snapshot()
     origin = _canonical_origin()

@@ -399,6 +399,7 @@ def record_view(
     country: str | None = None,
     accept_language: str | None = None,
     visitor_key: str | None = None,
+    source_hint: str | None = None,
 ) -> dict[str, Any]:
     visitor_key = visitor_key or _viewer_key(
         remote_addr,
@@ -441,6 +442,7 @@ def record_view(
             path=path,
             country=country,
             viewed_at=stats["last_viewed_at"],
+            source_hint=source_hint,
         )
         _save_viewer_analytics(settings.viewer_analytics_path, analytics)
     return _public_viewer_stats(stats)
@@ -682,8 +684,9 @@ def _record_viewer_analytics(
     path: str | None,
     country: str | None,
     viewed_at: str | None,
+    source_hint: str | None = None,
 ) -> None:
-    source = _viewer_source(referrer)
+    source = _viewer_source(referrer, source_hint)
     referrer_host = _viewer_referrer_host(referrer)
     device = _viewer_device(user_agent)
     browser = _viewer_browser(user_agent)
@@ -914,7 +917,10 @@ def _increment_bucket(bucket: dict[str, int], key: str) -> None:
     bucket[key] = int(bucket.get(key, 0) or 0) + 1
 
 
-def _viewer_source(referrer: str | None) -> str:
+def _viewer_source(referrer: str | None, source_hint: str | None = None) -> str:
+    hinted_source = _viewer_source_hint(source_hint)
+    if hinted_source:
+        return hinted_source
     host = _viewer_referrer_host(referrer)
     if host == "direct":
         return "direct"
@@ -931,6 +937,27 @@ def _viewer_source(referrer: str | None) -> str:
     if _viewer_host_matches(host, ("reddit.",)):
         return "reddit"
     return "other"
+
+
+def _viewer_source_hint(source_hint: str | None) -> str | None:
+    value = (source_hint or "").strip().lower()
+    if not value:
+        return None
+    aliases = {
+        "fb": "facebook",
+        "facebook": "facebook",
+        "google": "google",
+        "t.co": "x",
+        "twitter": "x",
+        "x": "x",
+        "youtube": "youtube",
+        "youtu.be": "youtube",
+        "yt": "youtube",
+        "tiktok": "tiktok",
+        "tt": "tiktok",
+        "reddit": "reddit",
+    }
+    return aliases.get(value)
 
 
 def _viewer_host_matches(host: str, domains: tuple[str, ...]) -> bool:
