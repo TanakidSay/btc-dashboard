@@ -696,7 +696,7 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Recent Alerts" in html
     assert "recentAlertBox" in html
     assert "dashboard.js" in html
-    assert "20260528-1" in html
+    assert "20260602-1" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
     assert 'rel="canonical"' in html
     assert 'property="og:title"' in html

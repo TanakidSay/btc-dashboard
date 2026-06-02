@@ -24,6 +24,7 @@ from btc_dashboard.services import (
     _parse_farside_etf_rows_from_text,
     _parse_farside_latest_rows,
     _parse_walletpilot_embedded_flow_rows,
+    bitcoin_age_days,
     build_alerts,
     clear_cache,
     fee_spike_alert,
@@ -44,6 +45,7 @@ from btc_dashboard.services import (
     get_security_overview,
     get_viewer_analytics,
     get_viewer_stats,
+    halving_countdown,
     increment_total_views,
     load_recent_alerts,
     load_total_views,
@@ -63,6 +65,31 @@ def test_format_hashrate_handles_missing_value() -> None:
 def test_format_hashrate_scales_units() -> None:
     assert format_hashrate(1_500) == "1.50 PH/s"
     assert format_hashrate(2_000_000) == "2.00 EH/s"
+
+
+def test_bitcoin_age_days_counts_from_genesis_block() -> None:
+    assert bitcoin_age_days(datetime(2009, 1, 4, tzinfo=UTC)) == 1
+    assert bitcoin_age_days(datetime(2026, 6, 2, tzinfo=UTC)) == 6359
+
+
+def test_halving_countdown_calculates_blocks_and_days() -> None:
+    payload = halving_countdown(1_049_000)
+
+    assert payload == {
+        "next_halving_block": 1_050_000,
+        "blocks_remaining": 1_000,
+        "halving_eta_days": 6.9,
+    }
+
+
+def test_halving_countdown_falls_back_when_block_height_is_missing() -> None:
+    payload = halving_countdown(None)
+
+    assert payload == {
+        "next_halving_block": 1_050_000,
+        "blocks_remaining": None,
+        "halving_eta_days": None,
+    }
 
 
 def test_price_breakout_alert_detects_new_high() -> None:

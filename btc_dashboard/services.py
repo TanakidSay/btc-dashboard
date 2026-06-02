@@ -41,6 +41,8 @@ BROWSER_HEADERS = {
 FALLBACK_NODE_COUNT = "N/A"
 SAFE_SECURITY_RISK = "low"
 BITCOIN_MAX_SUPPLY_BTC = 21_000_000
+BITCOIN_GENESIS_DATE = date(2009, 1, 3)
+NEXT_HALVING_BLOCK = 1_050_000
 SATOSHI_ESTIMATED_BTC = 1_100_000
 LOST_BTC_ESTIMATE_RANGE = {"low": 3_000_000, "high": 4_000_000}
 ETF_FUNDS_ESTIMATED_BTC = 1_400_000
@@ -2547,6 +2549,74 @@ def _utc_now_iso() -> str:
 
 def _utc_now_dt() -> datetime:
     return datetime.now(UTC)
+
+
+def bitcoin_age_days(now: datetime | date | None = None) -> int:
+    today = _coerce_utc_date(now or _utc_now_dt())
+    return max((today - BITCOIN_GENESIS_DATE).days, 0)
+
+
+def halving_countdown(
+    current_block_height: int | str | None,
+    next_halving_block: int = NEXT_HALVING_BLOCK,
+) -> dict[str, int | float | None]:
+    height = _coerce_block_height(current_block_height)
+    if height is None:
+        return {
+            "next_halving_block": next_halving_block,
+            "blocks_remaining": None,
+            "halving_eta_days": None,
+        }
+    blocks_remaining = max(next_halving_block - height, 0)
+    return {
+        "next_halving_block": next_halving_block,
+        "blocks_remaining": blocks_remaining,
+        "halving_eta_days": round(blocks_remaining * 10 / 1440, 1),
+    }
+
+
+def get_current_block_height(
+    settings: Settings,
+    cached_height: int | str | None = None,
+) -> int | None:
+    cached = _coerce_block_height(cached_height)
+    if cached is not None:
+        return cached
+    return _cached_for(
+        "block_height",
+        FEE_MEMPOOL_TTL_SECONDS,
+        lambda: _get_current_block_height_with_fallbacks(settings),
+        "block height refreshed",
+    )
+
+
+def _get_current_block_height_with_fallbacks(settings: Settings) -> int | None:
+    try:
+        return int(rpc_call("getblockcount", [], settings))
+    except (DataSourceError, requests.RequestException, KeyError, TypeError, ValueError) as exc:
+        logger.warning("node block height lookup failed: %s", exc)
+    try:
+        blocks = _get_json("https://mempool.space/api/v1/blocks", settings)
+        return int(blocks[0]["height"])
+    except (requests.RequestException, KeyError, TypeError, ValueError, IndexError) as exc:
+        logger.warning("mempool block height lookup failed: %s", exc)
+        return None
+
+
+def _coerce_utc_date(value: datetime | date) -> date:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).date()
+    return value
+
+
+def _coerce_block_height(value: int | str | None) -> int | None:
+    try:
+        height = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return height if height >= 0 else None
 
 
 def _persistent_cache_is_fresh(cache_name: str, ttl_seconds: int) -> bool:

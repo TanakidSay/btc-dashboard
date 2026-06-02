@@ -9,11 +9,13 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 from .config import Settings
 from .services import (
     append_metric_point,
+    bitcoin_age_days,
     build_alerts,
     format_hashrate,
     get_btc_price_result,
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
+    get_current_block_height,
     get_etf_flow,
     get_fear_greed_index,
     get_privacy_safe_visitor_key,
@@ -21,6 +23,7 @@ from .services import (
     get_security_overview,
     get_viewer_analytics,
     get_viewer_stats,
+    halving_countdown,
     load_recent_alerts,
     record_alert_history,
     record_view,
@@ -130,6 +133,15 @@ def _fee_recommendation_from_history(fees):
         "hourFee": round(float(numeric_fees.quantile(0.25)), 1),
         "source": "fee history estimate",
     }
+
+
+def _latest_cached_block_height(fee_data: pd.DataFrame | None) -> int | None:
+    if fee_data is None or fee_data.empty or "height" not in fee_data:
+        return None
+    heights = pd.to_numeric(fee_data["height"], errors="coerce").dropna()
+    if heights.empty:
+        return None
+    return int(heights.max())
 
 
 @api.route("/api/fees")
@@ -246,16 +258,32 @@ def api_price():
 @api.route("/api/network")
 def api_network():
     try:
+        settings = _settings()
         data = snapshot()
+        current_block_height = get_current_block_height(
+            settings,
+            _latest_cached_block_height(data.get("fee_data")),
+        )
         return jsonify({
             "hashrate": format_hashrate(data["hashrate"]),
             "hashrate_raw": data["hashrate"] if data["hashrate"] is not None else 0,
             "nodes": data["node_count"] if data["node_count"] else "N/A",
+            "current_block_height": current_block_height,
+            "bitcoin_age_days": bitcoin_age_days(),
+            **halving_countdown(current_block_height),
             "updated_at": data.get("metric_timestamps", {}).get("network"),
         })
     except Exception as exc:
         current_app.logger.exception("/api/network failed: %s", exc)
-        return jsonify({"hashrate": "N/A", "hashrate_raw": 0, "nodes": "N/A", "updated_at": None})
+        return jsonify({
+            "hashrate": "N/A",
+            "hashrate_raw": 0,
+            "nodes": "N/A",
+            "current_block_height": None,
+            "bitcoin_age_days": bitcoin_age_days(),
+            **halving_countdown(None),
+            "updated_at": None,
+        })
 
 
 @api.route("/api/etf")

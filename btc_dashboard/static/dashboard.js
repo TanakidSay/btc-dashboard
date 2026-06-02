@@ -78,6 +78,11 @@ function formatPercent(value) {
     return Number.isFinite(numeric) ? `${numeric.toFixed(2)}%` : "N/A";
 }
 
+function formatInteger(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "N/A";
+}
+
 function formatFlowDate(value) {
     if (!value) return "";
     const numeric = Number(value);
@@ -460,25 +465,48 @@ async function updateHashChart() {
 }
 
 // ── Network ───────────────────────────────────────────────
+function renderNetworkMetrics(data) {
+    const hashrateEl = document.getElementById("hashrate");
+    const nodesEl = document.getElementById("nodes");
+    const ageEl = document.getElementById("bitcoinAgeDays");
+    const halvingDaysEl = document.getElementById("nextHalvingDays");
+    const blocksLeftEl = document.getElementById("halvingBlocksLeft");
+
+    if (hashrateEl) hashrateEl.innerText = valueOrNA(data.hashrate);
+    if (nodesEl) nodesEl.innerText = valueOrNA(data.nodes);
+    if (ageEl) {
+        ageEl.innerText = data.bitcoin_age_days === null || data.bitcoin_age_days === undefined
+            ? "N/A"
+            : `${formatInteger(data.bitcoin_age_days)} Days`;
+    }
+    if (halvingDaysEl) {
+        halvingDaysEl.innerText = data.halving_eta_days === null || data.halving_eta_days === undefined
+            ? "N/A"
+            : `${formatInteger(data.halving_eta_days)} Days`;
+    }
+    if (blocksLeftEl) {
+        blocksLeftEl.innerText = data.blocks_remaining === null || data.blocks_remaining === undefined
+            ? "N/A"
+            : formatInteger(data.blocks_remaining);
+    }
+}
+
 async function updateNetwork() {
     try {
-        const data = await fetchJson("/api/network");
-        document.getElementById("hashrate").innerText = valueOrNA(data.hashrate);
-        document.getElementById("nodes").innerText = valueOrNA(data.nodes);
+        renderNetworkMetrics(await fetchJson("/api/network"));
     } catch (error) {
         console.error("Failed to update network data", error);
-        document.getElementById("hashrate").innerText = "N/A";
-        document.getElementById("nodes").innerText = "N/A";
+        renderNetworkMetrics({ hashrate: "N/A", nodes: "N/A" });
     }
 }
 
 async function updateNetworkNodes() {
     try {
-        const data = await fetchJson("/api/network");
-        document.getElementById("nodes").innerText = valueOrNA(data.nodes);
+        renderNetworkMetrics(await fetchJson("/api/network"));
     } catch (error) {
         console.error("Failed to update node count", error);
-        document.getElementById("nodes").innerText = "N/A";
+        const nodesEl = document.getElementById("nodes");
+        if (nodesEl) nodesEl.innerText = "N/A";
     }
 }
 
