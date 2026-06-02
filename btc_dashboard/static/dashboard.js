@@ -216,7 +216,7 @@ function updateNetworkSecuritySummary(data) {
     const summaryEl = document.getElementById("networkSecuritySummary");
     if (!statusEl || !summaryEl) return;
     statusEl.textContent = riskLabel(status);
-    statusEl.className = `text-sm font-semibold ${riskClass(status)}`;
+    statusEl.className = `text-xs font-semibold ${riskClass(status)}`;
     summaryEl.innerHTML = `
         <span class="block font-semibold ${riskClass(attackRisk)}">
             51% Attack Risk: ${escapeHtml(topPoolShare ?? "-")}% ${escapeHtml(topPoolName)}
@@ -642,7 +642,9 @@ function renderInstitutionalCards(etfData, treasuryData, priceData) {
     document.getElementById("treasuryDominance").innerText = `Dominance: ${formatPercent(valueOrNA(treasuryData.treasury_dominance_percent))}`;
     const treasurySource = treasuryData.source_label ?? treasuryData.source ?? "unknown";
     const treasuryChecked = treasuryData.updated_at ? ` | Last checked: ${formatDateTime(treasuryData.updated_at)}` : "";
-    document.getElementById("treasurySource").innerText = `Source: ${treasurySource}${treasuryChecked}`;
+    const treasurySourceEl = document.getElementById("treasurySource");
+    treasurySourceEl.innerText = `Source: ${treasurySource}`;
+    treasurySourceEl.title = `Source: ${treasurySource}${treasuryChecked}`;
     document.getElementById("institutionalInsight").innerText = institutionalInsight(etfData, treasuryData, priceData);
 
     const holders = treasuryData.top_holders ?? [];
