@@ -2575,6 +2575,17 @@ def halving_countdown(
     }
 
 
+def estimate_market_cap_usd(
+    price_usd: float | int | str | None,
+    block_height: int | str | None,
+) -> float | None:
+    price = _to_float_or_none(price_usd)
+    height = _coerce_block_height(block_height)
+    if price is None or height is None:
+        return None
+    return round(price * _issued_btc_at_height(height), 2)
+
+
 def get_current_block_height(
     settings: Settings,
     cached_height: int | str | None = None,

@@ -11,6 +11,7 @@ from .services import (
     append_metric_point,
     bitcoin_age_days,
     build_alerts,
+    estimate_market_cap_usd,
     format_hashrate,
     get_btc_price_result,
     get_btc_supply_ownership,
@@ -270,6 +271,7 @@ def api_network():
             "nodes": data["node_count"] if data["node_count"] else "N/A",
             "current_block_height": current_block_height,
             "bitcoin_age_days": bitcoin_age_days(),
+            "market_cap_usd": estimate_market_cap_usd(data.get("btc_price"), current_block_height),
             **halving_countdown(current_block_height),
             "updated_at": data.get("metric_timestamps", {}).get("network"),
         })
@@ -281,6 +283,7 @@ def api_network():
             "nodes": "N/A",
             "current_block_height": None,
             "bitcoin_age_days": bitcoin_age_days(),
+            "market_cap_usd": None,
             **halving_countdown(None),
             "updated_at": None,
         })

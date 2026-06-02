@@ -60,6 +60,7 @@ function formatCompactUsd(value) {
     if (!Number.isFinite(numeric)) return "N/A";
     const sign = numeric < 0 ? "-" : "";
     const abs = Math.abs(numeric);
+    if (abs >= 1_000_000_000_000) return `${sign}$${(abs / 1_000_000_000_000).toFixed(2)}T`;
     if (abs >= 1_000_000_000) return `${sign}$${(abs / 1_000_000_000).toFixed(2)}B`;
     if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
     if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(2)}K`;
@@ -468,12 +469,14 @@ async function updateHashChart() {
 function renderNetworkMetrics(data) {
     const hashrateEl = document.getElementById("hashrate");
     const nodesEl = document.getElementById("nodes");
+    const marketCapEl = document.getElementById("btcMarketCap");
     const ageEl = document.getElementById("bitcoinAgeDays");
     const halvingDaysEl = document.getElementById("nextHalvingDays");
     const blocksLeftEl = document.getElementById("halvingBlocksLeft");
 
     if (hashrateEl) hashrateEl.innerText = valueOrNA(data.hashrate);
     if (nodesEl) nodesEl.innerText = valueOrNA(data.nodes);
+    if (marketCapEl) marketCapEl.innerText = formatCompactUsd(data.market_cap_usd);
     if (ageEl) {
         ageEl.innerText = data.bitcoin_age_days === null || data.bitcoin_age_days === undefined
             ? "N/A"

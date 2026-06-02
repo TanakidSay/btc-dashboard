@@ -27,6 +27,7 @@ from btc_dashboard.services import (
     bitcoin_age_days,
     build_alerts,
     clear_cache,
+    estimate_market_cap_usd,
     fee_spike_alert,
     format_hashrate,
     get_btc_price,
@@ -90,6 +91,15 @@ def test_halving_countdown_falls_back_when_block_height_is_missing() -> None:
         "blocks_remaining": None,
         "halving_eta_days": None,
     }
+
+
+def test_estimate_market_cap_usd_uses_issued_supply_at_height() -> None:
+    assert estimate_market_cap_usd(100_000, 839_999) == 1_968_750_000_000
+
+
+def test_estimate_market_cap_usd_falls_back_when_inputs_are_missing() -> None:
+    assert estimate_market_cap_usd(None, 839_999) is None
+    assert estimate_market_cap_usd(100_000, None) is None
 
 
 def test_price_breakout_alert_detects_new_high() -> None:

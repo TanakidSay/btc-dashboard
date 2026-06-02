@@ -148,9 +148,15 @@
             <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
                 <h2 class="text-sm text-gray-400">Treasury BTC Holdings</h2>
                 <p id="treasuryBtcHeld" class="text-3xl font-bold text-gray-100">Loading...</p>
-                <div class="mt-2 flex items-center justify-between gap-3 border-t border-gray-800 pt-2">
-                    <span class="text-xs text-gray-500">Bitcoin Age</span>
-                    <span id="bitcoinAgeDays" class="text-sm font-semibold text-gray-300">-</span>
+                <div class="mt-2 grid gap-1 border-t border-gray-800 pt-2">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-500">Market Cap</span>
+                        <span id="btcMarketCap" class="text-sm font-semibold text-gray-300">-</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-xs text-gray-500">Bitcoin Age</span>
+                        <span id="bitcoinAgeDays" class="text-sm font-semibold text-gray-300">-</span>
+                    </div>
                 </div>
                 <p id="treasuryDominance" class="mt-1 text-xs text-gray-500">Dominance: -</p>
                 <p id="treasurySource" class="mt-1 text-xs text-gray-500">Source: loading</p>
