@@ -32,6 +32,10 @@ class EtfUpdateError(RuntimeError):
     pass
 
 
+class NoConfirmedEtfRow(EtfUpdateError):
+    pass
+
+
 def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -121,7 +125,15 @@ def fetch_live_etf_flow(
             )
             continue
         failures.append(f"{source_name}: {payload.get('error') or 'no usable live rows'}")
-    raise EtfUpdateError("No live ETF flow source returned usable rows. " + " | ".join(failures))
+    raise NoConfirmedEtfRow(
+        "No live ETF flow source returned usable rows. "
+        "No confirmed ETF row yet; keeping the latest verified production data. "
+        + " | ".join(failures),
+    )
+
+
+def log_no_confirmed_row(exc: NoConfirmedEtfRow) -> None:
+    print(str(exc), file=sys.stderr)
 
 
 def build_manual_payload(
@@ -245,7 +257,11 @@ def main(argv: list[str] | None = None) -> int:
     if minimum_latest_date:
         print(f"Minimum ETF flow date required: {minimum_latest_date.isoformat()}")
 
-    live_payload = fetch_live_etf_flow(settings, minimum_latest_date=minimum_latest_date)
+    try:
+        live_payload = fetch_live_etf_flow(settings, minimum_latest_date=minimum_latest_date)
+    except NoConfirmedEtfRow as exc:
+        log_no_confirmed_row(exc)
+        return 0
     admin_payload = build_manual_payload(live_payload)
     latest_date = admin_payload["flow_history"][-1]["date"]
 

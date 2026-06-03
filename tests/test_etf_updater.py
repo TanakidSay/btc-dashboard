@@ -91,6 +91,33 @@ def test_fetch_live_etf_flow_rejects_all_fallback_sources(monkeypatch) -> None:
         update_etf_flows.fetch_live_etf_flow(settings)  # type: ignore[arg-type]
 
 
+def test_main_succeeds_when_no_confirmed_etf_row_is_available(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(update_etf_flows.Settings, "from_env", lambda: object())
+    monkeypatch.setattr(
+        update_etf_flows,
+        "get_current_latest_date",
+        lambda base_url, timeout: "2026-06-01",
+    )
+
+    def fake_fetch_live_etf_flow(settings, *, minimum_latest_date=None):
+        raise update_etf_flows.NoConfirmedEtfRow(
+            "No confirmed ETF row yet; keeping the latest verified production data. "
+            "farside-reader: latest row 2026-06-01 is older than expected 2026-06-02",
+        )
+
+    def fail_post_admin(*args, **kwargs):
+        raise AssertionError("stale ETF data should not be posted")
+
+    monkeypatch.setattr(update_etf_flows, "fetch_live_etf_flow", fake_fetch_live_etf_flow)
+    monkeypatch.setattr(update_etf_flows, "post_admin_payload", fail_post_admin)
+
+    assert update_etf_flows.main(["--expected-date", "2026-06-02"]) == 0
+
+    captured = capsys.readouterr()
+    assert "No confirmed ETF row yet" in captured.err
+    assert "keeping the latest verified production data" in captured.err
+
+
 def test_post_admin_payload_strips_control_characters(monkeypatch) -> None:
     captured = {}
 
