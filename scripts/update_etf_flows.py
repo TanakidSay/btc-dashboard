@@ -114,7 +114,14 @@ def fetch_live_etf_flow(
             failures.append(f"{source_name}: skipped; API key is not configured")
             continue
         loader = getattr(services, loader_name)
-        payload = loader(settings)
+        try:
+            payload = loader(settings)
+        except Exception as exc:
+            failures.append(f"{source_name}: source failed: {exc}")
+            continue
+        if not isinstance(payload, dict):
+            failures.append(f"{source_name}: invalid source payload")
+            continue
         if is_live_etf_payload(payload, minimum_latest_date=minimum_latest_date):
             return payload
         latest_date = parse_etf_payload_latest_date(payload)

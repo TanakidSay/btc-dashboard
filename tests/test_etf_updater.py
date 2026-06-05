@@ -56,6 +56,46 @@ def test_fetch_live_etf_flow_skips_missing_key_and_fallback(monkeypatch) -> None
     assert payload["latest_date"] == "2026-05-18"
 
 
+def test_fetch_live_etf_flow_continues_after_source_exception(monkeypatch) -> None:
+    settings = SimpleNamespace(sosovalue_api_key=None, coinglass_api_key=None)
+
+    monkeypatch.setattr(
+        update_etf_flows.services,
+        "_get_etf_flow_from_farside_latest",
+        lambda settings: (_ for _ in ()).throw(RuntimeError("blocked")),
+    )
+    monkeypatch.setattr(
+        update_etf_flows.services,
+        "_get_etf_flow_from_farside",
+        lambda settings: {
+            "source": "farside",
+            "latest_date": "2026-05-18",
+            "flow_history": [{"date": "2026-05-18", "net_flow_usd": 123_000_000}],
+        },
+    )
+
+    payload = update_etf_flows.fetch_live_etf_flow(settings)  # type: ignore[arg-type]
+
+    assert payload["source"] == "farside"
+    assert payload["latest_date"] == "2026-05-18"
+
+
+def test_fetch_live_etf_flow_treats_all_source_exceptions_as_no_confirmed_row(
+    monkeypatch,
+) -> None:
+    settings = SimpleNamespace(sosovalue_api_key=None, coinglass_api_key=None)
+
+    for _, loader_name, _ in update_etf_flows.LIVE_SOURCE_LOADERS:
+        monkeypatch.setattr(
+            update_etf_flows.services,
+            loader_name,
+            lambda settings: (_ for _ in ()).throw(RuntimeError("blocked")),
+        )
+
+    with pytest.raises(update_etf_flows.NoConfirmedEtfRow, match="source failed: blocked"):
+        update_etf_flows.fetch_live_etf_flow(settings)  # type: ignore[arg-type]
+
+
 def test_fetch_live_etf_flow_rejects_rows_older_than_expected(monkeypatch) -> None:
     settings = SimpleNamespace(sosovalue_api_key=None, coinglass_api_key=None)
 
