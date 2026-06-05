@@ -19,6 +19,7 @@ from btc_dashboard.services import (
     _extract_globalcoinguide_date,
     _extract_millions_flow,
     _extract_walletpilot_date,
+    _normalize_coinmetrics_mvrv_rows,
     _normalize_etf_payload,
     _parse_bitbo_etf_rows,
     _parse_farside_etf_rows_from_text,
@@ -40,6 +41,8 @@ from btc_dashboard.services import (
     get_hashrate,
     get_hashrate_chart_points,
     get_hashrate_result,
+    get_mvrv_history,
+    get_mvrv_summary,
     get_node_count,
     get_node_count_result,
     get_recent_whale_transactions,
@@ -50,8 +53,10 @@ from btc_dashboard.services import (
     increment_total_views,
     load_recent_alerts,
     load_total_views,
+    mvrv_zone,
     price_breakout_alert,
     record_alert_history,
+    record_analytics_event,
     record_view,
     save_total_views,
     update_manual_etf_flow_file,
@@ -2281,3 +2286,82 @@ def test_normalize_live_etf_payload_uses_previous_nonzero_row_for_latest_zero(
     assert payload["source"] == "farside-latest"
     assert payload["latest_date"] == "2026-05-27"
     assert payload["latest_net_flow_usd"] == -193_000_000.0
+
+
+def test_mvrv_zone_thresholds() -> None:
+    assert mvrv_zone(0.99) == "Deep Value"
+    assert mvrv_zone(1.0) == "Accumulation"
+    assert mvrv_zone(2.0) == "Neutral / Warm"
+    assert mvrv_zone(3.5) == "Neutral / Warm"
+    assert mvrv_zone(3.51) == "Overheated"
+    assert mvrv_zone(None) == "N/A"
+
+
+def test_normalize_coinmetrics_mvrv_rows_sorts_and_filters() -> None:
+    rows = _normalize_coinmetrics_mvrv_rows({
+        "data": [
+            {"time": "2024-06-02T00:00:00.000000000Z", "CapMVRVCur": "2.345"},
+            {"time": "2024-06-01T00:00:00.000000000Z", "CapMVRVCur": "1.234"},
+            {"time": "2024-06-03T00:00:00.000000000Z", "CapMVRVCur": None},
+        ],
+    })
+
+    assert rows == [
+        {"date": "2024-06-01", "mvrv": 1.23},
+        {"date": "2024-06-02", "mvrv": 2.35},
+    ]
+
+
+def test_get_mvrv_summary_uses_latest_coinmetrics_row(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert "community-api.coinmetrics.io" in url
+        assert kwargs["params"]["metrics"] == "CapMVRVCur"
+        return FakeResponse({
+            "data": [
+                {"time": "2026-06-04T00:00:00.000000000Z", "CapMVRVCur": "1.95"},
+                {"time": "2026-06-05T00:00:00.000000000Z", "CapMVRVCur": "2.15"},
+            ],
+        })
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_mvrv_summary(_settings(tmp_path))
+
+    assert payload["value"] == 2.15
+    assert payload["zone"] == "Neutral / Warm"
+    assert payload["source"] == "CoinMetrics"
+    assert payload["updated_at"] == "2026-06-05T00:00:00Z"
+
+
+def test_get_mvrv_history_returns_clean_chart_rows(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse({
+            "data": [
+                {"time": "2024-01-01T00:00:00.000000000Z", "CapMVRVCur": "1.8"},
+                {"time": "2024-06-01T00:00:00.000000000Z", "CapMVRVCur": "2.35"},
+            ],
+        })
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+
+    payload = get_mvrv_history(_settings(tmp_path))
+
+    assert payload["source"] == "CoinMetrics"
+    assert payload["data"] == [
+        {"date": "2024-01-01", "mvrv": 1.8},
+        {"date": "2024-06-01", "mvrv": 2.35},
+    ]
+
+
+def test_record_analytics_event_tracks_allowed_mvrv_event(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    assert record_analytics_event(
+        settings,
+        "mvrv_chart_close",
+        remote_addr="127.0.0.1",
+        user_agent="Mozilla/5.0",
+    )
+
+    analytics = get_viewer_analytics(settings)
+    assert analytics["paths"]["/event/mvrv_chart_close"] == 1

@@ -91,7 +91,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(api)
 
     configure_state(settings)
-    warm_local_cache(settings)
+    if settings.warm_local_cache_on_startup:
+        warm_local_cache(settings)
+    else:
+        app.logger.info("Skipping startup warm cache")
 
     if settings.start_worker:
         start_background_worker(settings)

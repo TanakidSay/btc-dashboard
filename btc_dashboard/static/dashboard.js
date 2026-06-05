@@ -4,6 +4,9 @@ let priceChart;
 let txChart;
 let etfFlowChart;
 let supplyOwnershipChart;
+let mvrvChart;
+let mvrvHistoryLoaded = false;
+let mvrvHistoryLoading = false;
 const refreshJobs = new Map();
 
 const sharedChartOptions = {
@@ -532,6 +535,145 @@ async function fetchEtfFlow() { return fetchJson("/api/etf"); }
 async function fetchTreasury() { return fetchJson("/api/treasury"); }
 async function fetchFearGreed() { return fetchJson("/api/fear-greed"); }
 async function fetchSupplyOwnership() { return fetchJson("/api/ownership"); }
+async function fetchMvrvSummary() { return fetchJson("/api/mvrv"); }
+async function fetchMvrvHistory() { return fetchJson("/api/mvrv/history"); }
+
+function trackDashboardEvent(eventName) {
+    fetch("/api/analytics/event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: eventName }),
+        keepalive: true,
+    }).catch((error) => console.debug("Analytics event skipped", eventName, error));
+}
+
+function mvrvZoneClass(zone) {
+    if (zone === "Deep Value") return "rounded bg-green-800 px-2 py-1 text-xs font-semibold text-green-100";
+    if (zone === "Accumulation") return "rounded bg-emerald-800 px-2 py-1 text-xs font-semibold text-emerald-100";
+    if (zone === "Neutral / Warm") return "rounded bg-amber-700 px-2 py-1 text-xs font-semibold text-amber-100";
+    if (zone === "Overheated") return "rounded bg-red-800 px-2 py-1 text-xs font-semibold text-red-100";
+    return "rounded bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-300";
+}
+
+function renderMvrvSummary(data) {
+    const value = Number(data?.value);
+    const valueEl = document.getElementById("mvrvValue");
+    const zoneEl = document.getElementById("mvrvZone");
+    const descriptionEl = document.getElementById("mvrvDescription");
+    const sourceEl = document.getElementById("mvrvSource");
+    const updatedEl = document.getElementById("mvrvUpdated");
+
+    if (valueEl) {
+        valueEl.textContent = Number.isFinite(value) ? value.toFixed(2) : "N/A";
+    }
+    if (zoneEl) {
+        zoneEl.textContent = valueOrNA(data?.zone);
+        zoneEl.className = mvrvZoneClass(data?.zone);
+    }
+    if (descriptionEl) descriptionEl.textContent = data?.description || "MVRV data is temporarily unavailable.";
+    if (sourceEl) sourceEl.textContent = `Source: ${valueOrNA(data?.source)}`;
+    if (updatedEl) updatedEl.textContent = `Updated: ${formatDateTime(data?.updated_at)}`;
+}
+
+async function updateMvrvSummary() {
+    try {
+        renderMvrvSummary(await fetchMvrvSummary());
+    } catch (error) {
+        console.error("Failed to update MVRV summary", error);
+        renderMvrvSummary({
+            value: "N/A",
+            zone: "N/A",
+            description: "MVRV data is temporarily unavailable.",
+            source: "CoinMetrics",
+            updated_at: null,
+        });
+    }
+}
+
+function renderMvrvChart(data) {
+    const rows = (data?.data ?? []).filter((row) => Number.isFinite(Number(row.mvrv)));
+    const statusEl = document.getElementById("mvrvChartStatus");
+    if (!rows.length) {
+        if (statusEl) {
+            statusEl.textContent = "MVRV chart is temporarily unavailable.";
+            statusEl.classList.remove("hidden");
+        }
+        return;
+    }
+    if (statusEl) {
+        statusEl.textContent = `Source: ${valueOrNA(data?.source)}`;
+        statusEl.classList.remove("hidden");
+    }
+    const labels = rows.map((row) => formatFlowDate(row.date));
+    const values = rows.map((row) => Number(row.mvrv));
+    const chartEl = document.getElementById("mvrvChart");
+    if (!chartEl) return;
+    if (mvrvChart) {
+        mvrvChart.data.labels = labels;
+        mvrvChart.data.datasets[0].data = values;
+        mvrvChart.update();
+        return;
+    }
+    mvrvChart = new Chart(chartEl, {
+        type: "line",
+        data: {
+            labels,
+            datasets: [{
+                label: "MVRV Ratio",
+                data: values,
+                borderColor: "#f59e0b",
+                backgroundColor: "rgba(245,158,11,0.12)",
+                tension: 0.25,
+                fill: true,
+                pointRadius: 0,
+            }],
+        },
+        options: sharedChartOptions,
+    });
+}
+
+async function loadMvrvHistoryOnce() {
+    if (mvrvHistoryLoaded || mvrvHistoryLoading) return;
+    mvrvHistoryLoading = true;
+    const statusEl = document.getElementById("mvrvChartStatus");
+    if (statusEl) {
+        statusEl.textContent = "Loading historical MVRV...";
+        statusEl.classList.remove("hidden");
+    }
+    try {
+        renderMvrvChart(await fetchMvrvHistory());
+        mvrvHistoryLoaded = true;
+    } catch (error) {
+        console.error("Failed to load MVRV history", error);
+        if (statusEl) {
+            statusEl.textContent = "MVRV chart is temporarily unavailable.";
+            statusEl.classList.remove("hidden");
+        }
+    } finally {
+        mvrvHistoryLoading = false;
+    }
+}
+
+function initMvrvSection() {
+    const toggle = document.getElementById("mvrvChartToggle");
+    const panel = document.getElementById("mvrvChartPanel");
+    if (!toggle || !panel) return;
+    toggle.addEventListener("click", () => {
+        const isExpanded = toggle.getAttribute("aria-expanded") === "true";
+        if (isExpanded) {
+            panel.classList.add("hidden");
+            toggle.setAttribute("aria-expanded", "false");
+            toggle.textContent = "▼ Show Historical Chart";
+            trackDashboardEvent("mvrv_chart_close");
+            return;
+        }
+        panel.classList.remove("hidden");
+        toggle.setAttribute("aria-expanded", "true");
+        toggle.textContent = "▲ Hide Historical Chart";
+        trackDashboardEvent("mvrv_chart_open");
+        loadMvrvHistoryOnce();
+    });
+}
 
 function fearGreedClass(value) {
     const numeric = Number(value);
@@ -1025,7 +1167,9 @@ async function initDashboard() {
         updateSecurity(),
         updateFeeRecommendation(),
         updateFearGreed(),
+        updateMvrvSummary(),
         initDonationBox(),
+        initMvrvSection(),
     ]);
     updateBtcPriceCard();
     startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000);

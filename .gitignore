@@ -10,6 +10,7 @@ instance/
 logs/
 data/x_signal_state.json
 data/posted_events.json
+data/alerts_history.json
 data/view_counter.json
 data/viewer_stats.json
 data/viewer_analytics.json

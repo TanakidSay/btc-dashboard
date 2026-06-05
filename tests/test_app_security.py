@@ -37,6 +37,20 @@ def test_security_headers_are_added(monkeypatch, tmp_path) -> None:
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
 
+def test_can_skip_startup_warm_cache(monkeypatch, tmp_path) -> None:
+    called = False
+
+    def fake_warm_cache(settings) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", fake_warm_cache)
+
+    create_app(_settings(tmp_path, warm_local_cache_on_startup=False))
+
+    assert called is False
+
+
 def test_api_responses_disable_browser_cache(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path))
@@ -723,3 +737,55 @@ def test_frontend_includes_generational_wealth_branding_asset() -> None:
     assert "Animation-style child mascot" in html
     assert asset.exists()
     assert asset.stat().st_size < 150_000
+
+
+def test_mvrv_api_endpoints_return_clean_json(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_mvrv_summary",
+        lambda settings: {
+            "value": 2.15,
+            "zone": "Neutral / Warm",
+            "description": (
+                "Market value is above realized value but below historical overheated levels."
+            ),
+            "source": "CoinMetrics",
+            "updated_at": "2026-06-05T10:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_mvrv_history",
+        lambda settings: {
+            "source": "CoinMetrics",
+            "data": [{"date": "2024-06-01", "mvrv": 2.35}],
+        },
+    )
+    app = create_app(_settings(tmp_path))
+    client = app.test_client()
+
+    summary = client.get("/api/mvrv").get_json()
+    history = client.get("/api/mvrv/history").get_json()
+
+    assert summary["value"] == 2.15
+    assert summary["zone"] == "Neutral / Warm"
+    assert "api" not in json.dumps(summary).lower()
+    assert history == {
+        "source": "CoinMetrics",
+        "data": [{"date": "2024-06-01", "mvrv": 2.35}],
+    }
+
+
+def test_mvrv_frontend_lazy_chart_is_wired() -> None:
+    js = Path("btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+    html = Path("btc_dashboard/templates/dashboard.html").read_text(encoding="utf-8")
+
+    assert "Bitcoin MVRV Ratio" in html
+    assert "mvrvChartPanel" in html
+    assert "▼ Show Historical Chart" in html
+    assert 'fetchJson("/api/mvrv")' in js
+    assert 'fetchJson("/api/mvrv/history")' in js
+    assert "loadMvrvHistoryOnce()" in js
+    assert "mvrvHistoryLoaded" in js
+    assert "mvrv_chart_open" in js
+    assert "mvrv_chart_close" in js
+    assert "MVRV chart is temporarily unavailable." in js

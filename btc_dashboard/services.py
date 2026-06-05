@@ -61,6 +61,8 @@ INSTITUTIONAL_TTL_SECONDS = 60 * 60
 TREASURY_TTL_SECONDS = 24 * 60 * 60
 FEAR_GREED_TTL_SECONDS = 60 * 60
 SECURITY_TTL_SECONDS = 30 * 60
+MVRV_SUMMARY_TTL_SECONDS = 60 * 60
+MVRV_HISTORY_TTL_SECONDS = 12 * 60 * 60
 VIEWER_ANALYTICS_RETENTION_DAYS = 30
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
@@ -83,6 +85,7 @@ BITBO_BTC_ETF_FLOW_URL = "https://bitbo.io/treasuries/etf-flows/"
 WALLETPILOT_BTC_ETF_URL = "https://www.walletpilot.com/bitcoin-tracker/etfs"
 GLOBALCOINGUIDE_BTC_ETF_URL = "https://globalcoinguide.com/research/data/etf-flows"
 ALTERNATIVE_FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=30&format=json"
+COINMETRICS_MVRV_URL = "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
 BUNDLED_ETF_FLOW_PATH = BASE_DIR / "data/etf_flows.json"
 COINGECKO_TREASURY_URLS = (
     "https://api.coingecko.com/api/v3/companies/public_treasury/bitcoin",
@@ -163,6 +166,20 @@ FALLBACK_FEAR_GREED = {
     "data_timestamp": "",
     "data_note": "Fear & Greed data is unavailable.",
     "error": "",
+}
+FALLBACK_MVRV_HISTORY = [
+    {"date": "2023-01-01", "mvrv": 0.85},
+    {"date": "2023-06-01", "mvrv": 1.25},
+    {"date": "2024-01-01", "mvrv": 1.80},
+    {"date": "2024-06-01", "mvrv": 2.35},
+]
+FALLBACK_MVRV = {
+    "value": FALLBACK_MVRV_HISTORY[-1]["mvrv"],
+    "zone": "Neutral / Warm",
+    "description": "Market value is above realized value but below historical overheated levels.",
+    "source": "CoinMetrics",
+    "updated_at": "2024-06-01T00:00:00Z",
+    "status": "fallback",
 }
 ESTIMATED_BTC_TREASURY = {
     "total_btc_held": 1_271_929,
@@ -347,6 +364,11 @@ _persistent_caches: dict[str, PersistentCache] = {
     "etf_cache": PersistentCache(deepcopy(FALLBACK_ETF_FLOW)),
     "fear_greed_cache": PersistentCache(deepcopy(FALLBACK_FEAR_GREED)),
     "security_cache": PersistentCache({}),
+    "mvrv_cache": PersistentCache(deepcopy(FALLBACK_MVRV)),
+    "mvrv_history_cache": PersistentCache({
+        "source": "CoinMetrics",
+        "data": deepcopy(FALLBACK_MVRV_HISTORY),
+    }),
 }
 
 
@@ -390,6 +412,42 @@ def get_viewer_analytics(settings: Settings) -> dict[str, Any]:
         _prune_viewer_events(analytics, _viewer_today_utc())
         _save_viewer_analytics(settings.viewer_analytics_path, analytics)
     return _public_viewer_analytics(analytics)
+
+
+def record_analytics_event(
+    settings: Settings,
+    event_name: str,
+    remote_addr: str | None,
+    user_agent: str | None,
+    referrer: str | None = None,
+    country: str | None = None,
+    accept_language: str | None = None,
+    visitor_key: str | None = None,
+) -> bool:
+    allowed_events = {"mvrv_card_view", "mvrv_chart_open", "mvrv_chart_close"}
+    if event_name not in allowed_events:
+        return False
+    event_path = f"/event/{event_name}"
+    visitor_key = visitor_key or _viewer_key(
+        remote_addr,
+        user_agent,
+        accept_language=accept_language,
+        country=country,
+    )
+    with _viewer_lock:
+        analytics = _load_viewer_analytics(settings.viewer_analytics_path)
+        _record_viewer_analytics(
+            analytics,
+            visitor_key,
+            user_agent,
+            referrer,
+            event_path,
+            country,
+            _viewer_now_iso(),
+            source_hint=event_name,
+        )
+        _save_viewer_analytics(settings.viewer_analytics_path, analytics)
+    return True
 
 
 def record_view(
@@ -1121,6 +1179,11 @@ def clear_cache() -> None:
         _persistent_caches["etf_cache"] = PersistentCache(deepcopy(FALLBACK_ETF_FLOW))
         _persistent_caches["fear_greed_cache"] = PersistentCache(deepcopy(FALLBACK_FEAR_GREED))
         _persistent_caches["security_cache"] = PersistentCache({})
+        _persistent_caches["mvrv_cache"] = PersistentCache(deepcopy(FALLBACK_MVRV))
+        _persistent_caches["mvrv_history_cache"] = PersistentCache({
+            "source": "CoinMetrics",
+            "data": deepcopy(FALLBACK_MVRV_HISTORY),
+        })
 
 
 def clear_etf_cache() -> None:
@@ -2490,6 +2553,123 @@ def get_fear_greed_index(settings: Settings) -> dict[str, Any]:
         "Fear & Greed index fallback served",
         FALLBACK_FEAR_GREED,
     )
+
+
+def get_mvrv_summary(settings: Settings) -> dict[str, Any]:
+    try:
+        return _cached_for(
+            "mvrv_summary",
+            MVRV_SUMMARY_TTL_SECONDS,
+            lambda: _fetch_mvrv_summary(settings),
+            "mvrv summary refreshed",
+        )
+    except Exception as exc:
+        fallback = deepcopy(FALLBACK_MVRV)
+        fallback["error"] = str(exc)
+        return fallback
+
+
+def get_mvrv_history(settings: Settings) -> dict[str, Any]:
+    try:
+        return _cached_for(
+            "mvrv_history",
+            MVRV_HISTORY_TTL_SECONDS,
+            lambda: _fetch_mvrv_history(settings),
+            "mvrv history refreshed",
+        )
+    except Exception as exc:
+        fallback = {"source": "CoinMetrics", "data": deepcopy(FALLBACK_MVRV_HISTORY)}
+        fallback["error"] = str(exc)
+        fallback["status"] = "fallback"
+        return fallback
+
+
+def mvrv_zone(value: float | int | str | None) -> str:
+    numeric = _safe_float(value)
+    if numeric is None:
+        return "N/A"
+    if numeric < 1.0:
+        return "Deep Value"
+    if numeric < 2.0:
+        return "Accumulation"
+    if numeric <= 3.5:
+        return "Neutral / Warm"
+    return "Overheated"
+
+
+def mvrv_description(value: float | int | str | None) -> str:
+    zone = mvrv_zone(value)
+    descriptions = {
+        "Deep Value": "Market value is below realized value, a historically rare deep-value zone.",
+        "Accumulation": (
+            "Market value is near realized value, a zone often associated with long-term "
+            "accumulation."
+        ),
+        "Neutral / Warm": (
+            "Market value is above realized value but below historical overheated levels."
+        ),
+        "Overheated": (
+            "Market value is elevated versus realized value, a historically hot valuation zone."
+        ),
+    }
+    return descriptions.get(zone, "MVRV data is temporarily unavailable.")
+
+
+def _fetch_mvrv_summary(settings: Settings) -> dict[str, Any]:
+    history = _fetch_coinmetrics_mvrv_history(settings, start_days=120)
+    if not history:
+        raise DataSourceError("empty MVRV summary")
+    latest = history[-1]
+    value = round(float(latest["mvrv"]), 2)
+    return {
+        "value": value,
+        "zone": mvrv_zone(value),
+        "description": mvrv_description(value),
+        "source": "CoinMetrics",
+        "updated_at": f"{latest['date']}T00:00:00Z",
+    }
+
+
+def _fetch_mvrv_history(settings: Settings) -> dict[str, Any]:
+    history = _fetch_coinmetrics_mvrv_history(settings, start_days=365 * 5)
+    if not history:
+        raise DataSourceError("empty MVRV history")
+    return {"source": "CoinMetrics", "data": history}
+
+
+def _fetch_coinmetrics_mvrv_history(settings: Settings, start_days: int) -> list[dict[str, Any]]:
+    start_date = (_utc_now_dt().date() - timedelta(days=start_days)).isoformat()
+    params = {
+        "assets": "btc",
+        "metrics": "CapMVRVCur",
+        "frequency": "1d",
+        "start_time": start_date,
+        "page_size": "10000",
+    }
+    response = session.get(
+        COINMETRICS_MVRV_URL,
+        headers=API_HEADERS,
+        params=params,
+        timeout=settings.request_timeout,
+    )
+    response.raise_for_status()
+    return _normalize_coinmetrics_mvrv_rows(response.json())
+
+
+def _normalize_coinmetrics_mvrv_rows(payload: Any) -> list[dict[str, Any]]:
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        value = _safe_float(row.get("CapMVRVCur") or row.get("mvrv"))
+        raw_time = str(row.get("time") or row.get("date") or "")[:10]
+        if value is None or not raw_time:
+            continue
+        normalized.append({"date": raw_time, "mvrv": round(value, 2)})
+    return sorted(normalized, key=lambda item: item["date"])
 
 
 def _get_fear_greed_from_alternative(settings: Settings) -> dict[str, Any]:

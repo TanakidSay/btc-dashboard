@@ -69,6 +69,7 @@ class Settings:
     x_signal_state_path: Path = BASE_DIR / "data/x_signal_state.json"
     x_posted_events_path: Path = BASE_DIR / "data/posted_events.json"
     start_worker: bool = True
+    warm_local_cache_on_startup: bool = True
     coinglass_api_key: str | None = None
     coingecko_demo_api_key: str | None = None
     sosovalue_api_key: str | None = None
@@ -160,6 +161,7 @@ class Settings:
                 "START_WORKER",
                 _bool_from_env("DASHBOARD_START_WORKER", True),
             ),
+            warm_local_cache_on_startup=_bool_from_env("WARM_LOCAL_CACHE", True),
             coinglass_api_key=os.getenv("COINGLASS_API_KEY") or None,
             coingecko_demo_api_key=os.getenv("COINGECKO_DEMO_API_KEY") or None,
             sosovalue_api_key=os.getenv("SOSOVALUE_API_KEY") or None,

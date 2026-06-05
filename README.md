@@ -150,7 +150,11 @@ DASHBOARD_USERNAME=<admin-user>
 DASHBOARD_PASSWORD=<strong-password>
 DASHBOARD_API_TOKEN=<long-random-token>
 START_WORKER=true
+WARM_LOCAL_CACHE=true
 ```
+
+For quick local startup checks, set `START_WORKER=false` and `WARM_LOCAL_CACHE=false`
+so Flask binds immediately without waiting on external data sources.
 
 Optional data-source variables:
 

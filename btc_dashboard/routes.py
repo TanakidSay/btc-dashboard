@@ -19,6 +19,8 @@ from .services import (
     get_current_block_height,
     get_etf_flow,
     get_fear_greed_index,
+    get_mvrv_history,
+    get_mvrv_summary,
     get_privacy_safe_visitor_key,
     get_recent_whale_transactions,
     get_security_overview,
@@ -27,6 +29,7 @@ from .services import (
     halving_countdown,
     load_recent_alerts,
     record_alert_history,
+    record_analytics_event,
     record_view,
     snapshot,
     state,
@@ -383,6 +386,58 @@ def api_fear_greed():
             "data_note": "Fear & Greed data is unavailable.",
             "error": str(exc),
         })
+
+
+def _record_dashboard_event(event_name: str) -> bool:
+    return record_analytics_event(
+        _settings(),
+        event_name,
+        request.headers.get("X-Forwarded-For", request.remote_addr),
+        request.headers.get("User-Agent"),
+        request.headers.get("Referer"),
+        request.headers.get("CF-IPCountry") or request.headers.get("X-Country-Code"),
+        request.headers.get("Accept-Language"),
+        get_privacy_safe_visitor_key(request),
+    )
+
+
+@api.route("/api/mvrv")
+def api_mvrv():
+    try:
+        _record_dashboard_event("mvrv_card_view")
+        return jsonify(get_mvrv_summary(_settings()))
+    except Exception as exc:
+        current_app.logger.exception("/api/mvrv failed: %s", exc)
+        return jsonify({
+            "value": "N/A",
+            "zone": "N/A",
+            "description": "MVRV data is temporarily unavailable.",
+            "source": "CoinMetrics",
+            "updated_at": None,
+            "status": "error",
+        })
+
+
+@api.route("/api/mvrv/history")
+def api_mvrv_history():
+    try:
+        return jsonify(get_mvrv_history(_settings()))
+    except Exception as exc:
+        current_app.logger.exception("/api/mvrv/history failed: %s", exc)
+        return jsonify({
+            "source": "CoinMetrics",
+            "data": [],
+            "status": "error",
+        })
+
+
+@api.route("/api/analytics/event", methods=["POST"])
+def api_analytics_event():
+    payload = request.get_json(silent=True) or {}
+    event_name = str(payload.get("event") or "")
+    recorded = _record_dashboard_event(event_name)
+    status = 200 if recorded else 400
+    return jsonify({"ok": recorded}), status
 
 
 @api.route("/api/ownership")
