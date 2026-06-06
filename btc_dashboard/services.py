@@ -424,7 +424,21 @@ def record_analytics_event(
     accept_language: str | None = None,
     visitor_key: str | None = None,
 ) -> bool:
-    allowed_events = {"mvrv_card_view", "mvrv_chart_open", "mvrv_chart_close"}
+    allowed_events = {
+        "advanced_network_open",
+        "advanced_network_close",
+        "ownership_details_open",
+        "ownership_details_close",
+        "etf_history_open",
+        "etf_history_close",
+        "latest_data_open",
+        "latest_data_close",
+        "site_stats_open",
+        "site_stats_close",
+        "mvrv_card_view",
+        "mvrv_chart_open",
+        "mvrv_chart_close",
+    }
     if event_name not in allowed_events:
         return False
     event_path = f"/event/{event_name}"

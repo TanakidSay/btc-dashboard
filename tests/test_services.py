@@ -2365,3 +2365,17 @@ def test_record_analytics_event_tracks_allowed_mvrv_event(tmp_path) -> None:
 
     analytics = get_viewer_analytics(settings)
     assert analytics["paths"]["/event/mvrv_chart_close"] == 1
+
+
+def test_record_analytics_event_tracks_allowed_accordion_event(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    assert record_analytics_event(
+        settings,
+        "advanced_network_open",
+        remote_addr="127.0.0.1",
+        user_agent="Mozilla/5.0",
+    )
+
+    analytics = get_viewer_analytics(settings)
+    assert analytics["paths"]["/event/advanced_network_open"] == 1

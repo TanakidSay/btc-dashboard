@@ -7,6 +7,10 @@ let supplyOwnershipChart;
 let mvrvChart;
 let mvrvHistoryLoaded = false;
 let mvrvHistoryLoading = false;
+let etfFlowChartLoaded = false;
+let etfFlowChartLoading = false;
+let supplyOwnershipLoaded = false;
+let supplyOwnershipLoading = false;
 const refreshJobs = new Map();
 
 const sharedChartOptions = {
@@ -547,6 +551,30 @@ function trackDashboardEvent(eventName) {
     }).catch((error) => console.debug("Analytics event skipped", eventName, error));
 }
 
+function initAccordionPanels() {
+    document.querySelectorAll("[data-accordion-toggle]").forEach((toggle) => {
+        const panelId = toggle.getAttribute("aria-controls");
+        const panel = document.getElementById(panelId || "");
+        if (!panel) return;
+        toggle.addEventListener("click", () => {
+            const expanded = toggle.getAttribute("aria-expanded") === "true";
+            const nextExpanded = !expanded;
+            toggle.setAttribute("aria-expanded", String(nextExpanded));
+            panel.hidden = !nextExpanded;
+            toggle.textContent = nextExpanded
+                ? toggle.dataset.openText || "▲ Hide"
+                : toggle.dataset.closedText || "▼ Show";
+            const eventName = nextExpanded ? toggle.dataset.openEvent : toggle.dataset.closeEvent;
+            if (eventName) trackDashboardEvent(eventName);
+            if (nextExpanded) {
+                if (panelId === "etfHistoryPanel") loadEtfFlowChartOnce();
+                if (panelId === "ownershipDetailsPanel") loadSupplyOwnershipOnce();
+                if (panelId === "advancedNetworkPanel") updateSecurity();
+            }
+        });
+    });
+}
+
 function mvrvZoneClass(zone) {
     if (zone === "Deep Value") return "rounded bg-green-800 px-2 py-1 text-xs font-semibold text-green-100";
     if (zone === "Accumulation") return "rounded bg-emerald-800 px-2 py-1 text-xs font-semibold text-emerald-100";
@@ -847,6 +875,29 @@ async function initEtfFlowChart() {
     });
     renderEtfFlowNote(etfData);
     renderInstitutionalCards(etfData, treasuryData, priceData);
+    etfFlowChartLoaded = true;
+}
+
+async function initInstitutionalSummary() {
+    let etfData = { flow_history: [], latest_net_flow_usd: 0, trend: "neutral", source: "fallback", updated_at: null };
+    let treasuryData = { total_btc_held: 0, treasury_dominance_percent: 0, top_holders: [] };
+    let priceData = { history: [] };
+    try {
+        [etfData, treasuryData, priceData] = await Promise.all([fetchEtfFlow(), fetchTreasury(), fetchPrice()]);
+    } catch (error) {
+        console.error("Failed to initialize institutional summary", error);
+    }
+    renderInstitutionalCards(etfData, treasuryData, priceData);
+}
+
+async function loadEtfFlowChartOnce() {
+    if (etfFlowChartLoaded || etfFlowChartLoading) return;
+    etfFlowChartLoading = true;
+    try {
+        await initEtfFlowChart();
+    } finally {
+        etfFlowChartLoading = false;
+    }
 }
 
 function renderSupplyOwnership(data) {
@@ -921,6 +972,17 @@ async function initSupplyOwnershipChart() {
         },
     });
     renderSupplyOwnership(data);
+    supplyOwnershipLoaded = true;
+}
+
+async function loadSupplyOwnershipOnce() {
+    if (supplyOwnershipLoaded || supplyOwnershipLoading) return;
+    supplyOwnershipLoading = true;
+    try {
+        await initSupplyOwnershipChart();
+    } finally {
+        supplyOwnershipLoading = false;
+    }
 }
 
 async function updateInstitutionalMetrics() {
@@ -948,6 +1010,7 @@ async function updateInstitutionalMetrics() {
 }
 
 async function updateSupplyOwnership() {
+    if (!supplyOwnershipLoaded) return;
     try {
         const data = await fetchSupplyOwnership();
         const ownership = (data.chart_categories ?? data.categories ?? data.ownership ?? []).filter((row) => Number.isFinite(Number(row.btc)));
@@ -1159,8 +1222,7 @@ async function initDashboard() {
         initFeeChart(),
         initTxChart(),
         initHashChart(),
-        initEtfFlowChart(),
-        initSupplyOwnershipChart(),
+        initInstitutionalSummary(),
         updateNetwork(),
         updateViewers(),
         updateAlert(),
@@ -1170,6 +1232,7 @@ async function initDashboard() {
         updateMvrvSummary(),
         initDonationBox(),
         initMvrvSection(),
+        initAccordionPanels(),
     ]);
     updateBtcPriceCard();
     startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000);

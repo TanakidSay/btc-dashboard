@@ -55,6 +55,12 @@
         .brand-mascot {
             filter: drop-shadow(0 24px 50px rgba(245, 158, 11, 0.16));
         }
+        .accordion-panel {
+            transition: opacity 0.18s ease;
+        }
+        .accordion-panel[hidden] {
+            display: none;
+        }
     </style>
 </head>
 <body class="bg-gray-950 text-white">
@@ -251,18 +257,50 @@
         </article>
     </section>
 
-    <section class="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-3" aria-label="Institutional metrics">
+    <section class="mb-6" aria-label="Institutional metrics">
         <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
             <h2 class="mb-2 text-sm text-gray-400">Institutional Insight</h2>
             <p id="institutionalInsight" class="text-sm font-semibold text-gray-200">Loading...</p>
             <div id="treasuryTopHolders" class="mt-3 grid gap-1 text-xs text-gray-400"></div>
         </article>
-        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow lg:col-span-2">
+    </section>
+
+    <section class="mb-6 grid gap-3" aria-label="Expandable dashboard details">
+        <button
+            id="etfHistoryToggle"
+            type="button"
+            class="w-full rounded-lg border border-amber-500/30 bg-gray-950 px-4 py-3 text-left text-sm font-semibold text-amber-100 transition hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+            aria-expanded="false"
+            aria-controls="etfHistoryPanel"
+            data-accordion-toggle
+            data-open-text="&#9650; Hide ETF Flow History"
+            data-closed-text="&#9660; Show ETF Flow History"
+            data-open-event="etf_history_open"
+            data-close-event="etf_history_close"
+        >
+            &#9660; Show ETF Flow History
+        </button>
+        <article id="etfHistoryPanel" class="accordion-panel rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" hidden>
             <h2 class="mb-2 font-semibold">ETF Flow History</h2>
             <p id="etfFlowNote" class="mb-2 hidden text-xs text-amber-300"></p>
             <div class="h-64"><canvas id="etfFlowChart"></canvas></div>
         </article>
-        <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow lg:col-span-3">
+
+        <button
+            id="ownershipDetailsToggle"
+            type="button"
+            class="w-full rounded-lg border border-amber-500/30 bg-gray-950 px-4 py-3 text-left text-sm font-semibold text-amber-100 transition hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+            aria-expanded="false"
+            aria-controls="ownershipDetailsPanel"
+            data-accordion-toggle
+            data-open-text="&#9650; Hide BTC Ownership Details"
+            data-closed-text="&#9660; Show BTC Ownership Details"
+            data-open-event="ownership_details_open"
+            data-close-event="ownership_details_close"
+        >
+            &#9660; Show BTC Ownership Details
+        </button>
+        <article id="ownershipDetailsPanel" class="accordion-panel rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" hidden>
             <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                     <h2 class="text-xl font-semibold">BTC Supply Ownership</h2>
@@ -318,7 +356,22 @@
         </article>
     </section>
 
-    <section class="mb-6 rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" aria-label="Security">
+    <section class="mb-6" aria-label="Advanced network security">
+        <button
+            id="advancedNetworkToggle"
+            type="button"
+            class="w-full rounded-lg border border-amber-500/30 bg-gray-950 px-4 py-3 text-left text-sm font-semibold text-amber-100 transition hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+            aria-expanded="false"
+            aria-controls="advancedNetworkPanel"
+            data-accordion-toggle
+            data-open-text="&#9650; Hide Advanced Network Security"
+            data-closed-text="&#9660; Show Advanced Network Security"
+            data-open-event="advanced_network_open"
+            data-close-event="advanced_network_close"
+        >
+            &#9660; Show Advanced Network Security
+        </button>
+        <div id="advancedNetworkPanel" class="accordion-panel mt-3 rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" hidden>
         <div class="mb-4 flex items-center justify-between">
             <h2 class="font-semibold text-lg">Network Security Monitor</h2>
             <span id="securityLastUpdate" class="text-xs text-gray-500">Updating...</span>
@@ -366,6 +419,7 @@
                 <div id="reorgList" class="text-xs text-gray-400 space-y-1"></div>
             </div>
         </div>
+        </div>
     </section>
 
     <section class="mb-6 rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" aria-label="Bitcoin MVRV">
@@ -402,9 +456,25 @@
         </div>
     </section>
 
-    <section class="overflow-auto rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" aria-label="Latest fee data">
-        <h2 class="mb-2 font-semibold">Latest Data</h2>
-        {{ table|safe }}
+    <section class="mb-6" aria-label="Latest fee data">
+        <button
+            id="latestDataToggle"
+            type="button"
+            class="w-full rounded-lg border border-amber-500/30 bg-gray-950 px-4 py-3 text-left text-sm font-semibold text-amber-100 transition hover:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+            aria-expanded="false"
+            aria-controls="latestDataPanel"
+            data-accordion-toggle
+            data-open-text="&#9650; Hide Latest Block Data"
+            data-closed-text="&#9660; Show Latest Block Data"
+            data-open-event="latest_data_open"
+            data-close-event="latest_data_close"
+        >
+            &#9660; Show Latest Block Data
+        </button>
+        <div id="latestDataPanel" class="accordion-panel mt-3 overflow-auto rounded-lg border border-gray-800 bg-gray-900 p-4 shadow" hidden>
+            <h2 class="mb-2 font-semibold">Latest Data</h2>
+            {{ table|safe }}
+        </div>
     </section>
 
     <aside class="ml-auto mt-6 w-full max-w-60 rounded-lg border border-amber-500/20 bg-gray-950/95 p-3 text-xs shadow shadow-black/20" aria-label="Donation support">
@@ -471,6 +541,6 @@
         </p>
     </footer>
 </main>
-<script src="{{ url_for('static', filename='dashboard.js', v='20260606-1') }}"></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='20260606-2') }}"></script>
 </body>
 </html>

@@ -715,7 +715,7 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Security" in html
     assert "networkSecuritySummary" in html
     assert "dashboard.js" in html
-    assert "20260606-1" in html
+    assert "20260606-2" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
     assert 'rel="canonical"' in html
     assert 'property="og:title"' in html
@@ -724,6 +724,29 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert 'name="twitter:image"' in html
     assert 'type="application/ld+json"' in html
     assert "FinanceApplication" in html
+
+
+def test_frontend_collapses_lower_priority_sections_by_default() -> None:
+    js = Path("btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+    html = Path("btc_dashboard/templates/dashboard.html").read_text(encoding="utf-8")
+
+    assert "data-accordion-toggle" in html
+    assert "etfHistoryPanel" in html
+    assert "ownershipDetailsPanel" in html
+    assert "advancedNetworkPanel" in html
+    assert "latestDataPanel" in html
+    assert 'aria-expanded="false"' in html
+    assert "Show ETF Flow History" in html
+    assert "Show BTC Ownership Details" in html
+    assert "Show Advanced Network Security" in html
+    assert "Show Latest Block Data" in html
+    assert "initAccordionPanels()" in js
+    assert "loadEtfFlowChartOnce()" in js
+    assert "loadSupplyOwnershipOnce()" in js
+    assert "etf_history_open" in html
+    assert "ownership_details_open" in html
+    assert "advanced_network_open" in html
+    assert "latest_data_open" in html
 
 
 def test_frontend_includes_generational_wealth_branding_asset() -> None:
