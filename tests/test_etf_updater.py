@@ -154,6 +154,7 @@ def test_diagnose_live_etf_sources_reports_each_source(monkeypatch) -> None:
         "_get_etf_flow_from_farside_latest",
         lambda settings: {"source": "fallback", "is_fallback": True, "error": "blocked"},
     )
+    monkeypatch.setattr(update_etf_flows, "probe_sosovalue_parameters", lambda *args, **kwargs: [])
 
     results = update_etf_flows.diagnose_live_etf_sources(
         settings,  # type: ignore[arg-type]
@@ -173,6 +174,59 @@ def test_diagnose_live_etf_sources_reports_each_source(monkeypatch) -> None:
     assert results[2]["source"] == "farside-latest"
     assert results[2]["status"] == "unusable"
     assert results[2]["error"] == "blocked"
+
+
+def test_probe_sosovalue_parameters_reports_candidate_shapes(monkeypatch) -> None:
+    settings = SimpleNamespace(sosovalue_api_key="soso-key")
+    requests_seen = []
+
+    def fake_post_json(url, settings, headers, payload):
+        requests_seen.append(payload)
+        if payload["type"] == "us-btc-spot":
+            return {
+                "code": 0,
+                "data": [
+                    {"date": "2025-05-15", "totalNetInflow": 10_000_000},
+                ],
+            }
+        if payload["type"] == "us-btc-spot-etf":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"date": "2026-06-12", "totalNetInflow": 85_900_000},
+                    ],
+                },
+            }
+        return {"code": 1, "msg": "unsupported type"}
+
+    monkeypatch.setattr(
+        update_etf_flows,
+        "SOSOVALUE_PROBE_TYPES",
+        ("us-btc-spot", "us-btc-spot-etf", "btc"),
+    )
+    monkeypatch.setattr(update_etf_flows.services, "_post_json_with_headers", fake_post_json)
+
+    results = update_etf_flows.probe_sosovalue_parameters(
+        settings,  # type: ignore[arg-type]
+        minimum_latest_date=datetime(2026, 6, 12, tzinfo=UTC).date(),
+    )
+
+    assert requests_seen == [
+        {"type": "us-btc-spot"},
+        {"type": "us-btc-spot-etf"},
+        {"type": "btc"},
+    ]
+    assert results[0]["source"] == "sosovalue-probe:us-btc-spot"
+    assert results[0]["status"] == "unusable"
+    assert results[0]["latest_date"] == "2025-05-15"
+    assert results[0]["detail"] == "data:list"
+    assert results[1]["source"] == "sosovalue-probe:us-btc-spot-etf"
+    assert results[1]["status"] == "ok"
+    assert results[1]["latest_date"] == "2026-06-12"
+    assert results[1]["detail"] == "data.list:list"
+    assert results[2]["status"] == "failed"
+    assert results[2]["error"] == "unsupported type"
 
 
 def test_main_diagnose_sources_does_not_post_admin_payload(monkeypatch, capsys) -> None:

@@ -27,6 +27,15 @@ LIVE_SOURCE_LOADERS = (
     ("globalcoinguide", "_get_etf_flow_from_globalcoinguide", None),
 )
 
+SOSOVALUE_PROBE_TYPES = (
+    "us-btc-spot",
+    "us-btc-spot-etf",
+    "btc-spot",
+    "bitcoin-spot-etf",
+    "bitcoin",
+    "btc",
+)
+
 
 class EtfUpdateError(RuntimeError):
     pass
@@ -190,6 +199,90 @@ def diagnose_live_etf_sources(
         elif not usable and not result["error"]:
             result["error"] = "no usable live rows"
         results.append(result)
+    results.extend(probe_sosovalue_parameters(settings, minimum_latest_date=minimum_latest_date))
+    return results
+
+
+def _sosovalue_rows_from_response(body: dict[str, Any]) -> tuple[list[Any], str]:
+    data = body.get("data")
+    if isinstance(data, list):
+        return data, "data:list"
+    if isinstance(data, dict):
+        for key in ("list", "rows", "data", "items", "records"):
+            rows = data.get(key)
+            if isinstance(rows, list):
+                return rows, f"data.{key}:list"
+        return [], "data:dict keys=" + ",".join(sorted(str(key) for key in data.keys())[:8])
+    return [], f"data:{type(data).__name__}"
+
+
+def _latest_date_from_sosovalue_rows(rows: list[Any]) -> date | None:
+    latest: date | None = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_date = services._parse_etf_date(str(row.get("date") or ""))
+        if row_date and (latest is None or row_date > latest):
+            latest = row_date
+    return latest
+
+
+def probe_sosovalue_parameters(
+    settings: Settings,
+    *,
+    minimum_latest_date: date | None = None,
+) -> list[dict[str, Any]]:
+    if not settings.sosovalue_api_key:
+        return []
+
+    headers = {
+        **services.API_HEADERS,
+        "x-soso-api-key": settings.sosovalue_api_key,
+        "Content-Type": "application/json",
+    }
+    results: list[dict[str, Any]] = []
+    for probe_type in SOSOVALUE_PROBE_TYPES:
+        result: dict[str, Any] = {
+            "source": f"sosovalue-probe:{probe_type}",
+            "status": "unknown",
+            "latest_date": "",
+            "rows": 0,
+            "usable": False,
+            "error": "",
+            "detail": "",
+        }
+        try:
+            body = services._post_json_with_headers(
+                services.SOSOVALUE_BTC_ETF_FLOW_URL,
+                settings,
+                headers,
+                {"type": probe_type},
+            )
+            if body.get("code") != 0:
+                raise ValueError(str(body.get("msg") or "SoSoValue returned non-zero code"))
+            rows, detail = _sosovalue_rows_from_response(body)
+            latest_date = _latest_date_from_sosovalue_rows(rows)
+            usable = bool(rows and latest_date)
+            if minimum_latest_date and latest_date and latest_date < minimum_latest_date:
+                usable = False
+                result["error"] = (
+                    f"latest row {latest_date.isoformat()} is older than expected "
+                    f"{minimum_latest_date.isoformat()}"
+                )
+            elif not rows:
+                result["error"] = "no rows"
+            elif latest_date is None:
+                result["error"] = "no parseable dates"
+            result.update({
+                "status": "ok" if usable else "unusable",
+                "latest_date": latest_date.isoformat() if latest_date else "",
+                "rows": len(rows),
+                "usable": usable,
+                "detail": detail,
+            })
+        except Exception as exc:
+            result.update({"status": "failed", "error": str(exc)})
+        results.append(result)
     return results
 
 
@@ -204,6 +297,8 @@ def print_source_diagnostics(results: list[dict[str, Any]]) -> None:
         )
         if result["error"]:
             line += f" error={result['error']}"
+        if result.get("detail"):
+            line += f" detail={result['detail']}"
         print(line)
 
 
