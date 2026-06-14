@@ -1724,7 +1724,13 @@ def _get_etf_flow_from_sosovalue(settings: Settings) -> dict[str, Any]:
         if not rows:
             raise ValueError("SoSoValue ETF response has no rows")
         history = []
-        for row in rows[-30:]:
+        parsed_rows = [
+            row
+            for row in rows
+            if isinstance(row, dict) and _parse_etf_date(str(row.get("date") or "")) is not None
+        ]
+        parsed_rows.sort(key=lambda row: _parse_etf_date(str(row.get("date") or "")))
+        for row in parsed_rows[-30:]:
             history.append({
                 "date": row.get("date"),
                 "net_flow_usd": (
@@ -1732,6 +1738,8 @@ def _get_etf_flow_from_sosovalue(settings: Settings) -> dict[str, Any]:
                 ),
                 "close_price": None,
             })
+        if not history:
+            raise ValueError("SoSoValue ETF response has no dated rows")
         return _normalize_etf_payload(history, "sosovalue")
     except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
         logger.warning("SoSoValue ETF flow request failed: %s", exc)

@@ -2225,6 +2225,37 @@ def test_get_etf_flow_uses_sosovalue_list_response_shape(monkeypatch, tmp_path) 
     assert payload["7d_flow"] == 63_400_000.0
 
 
+def test_get_etf_flow_sorts_sosovalue_rows_before_trimming(monkeypatch, tmp_path) -> None:
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse(status_code=503)
+
+    rows = [
+        {"date": "2026-06-12", "totalNetInflow": 85_900_000.0},
+        {"date": "2026-06-11", "totalNetInflow": -22_500_000.0},
+    ]
+    rows.extend(
+        {"date": f"2025-05-{day:02d}", "totalNetInflow": 1_000_000.0}
+        for day in range(1, 31)
+    )
+
+    def fake_post(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse({"code": 0, "msg": None, "data": rows})
+
+    monkeypatch.setattr("btc_dashboard.services.session.get", fake_get)
+    monkeypatch.setattr("btc_dashboard.services.session.post", fake_post)
+    monkeypatch.setattr(
+        "btc_dashboard.services._utc_now_dt",
+        lambda: datetime(2026, 6, 14, tzinfo=UTC),
+    )
+
+    payload = get_etf_flow(_settings(tmp_path, sosovalue_api_key="test-key"))
+
+    assert payload["source"] == "sosovalue"
+    assert payload["latest_date"] == "2026-06-12"
+    assert payload["latest_net_flow_usd"] == 85_900_000.0
+    assert len(payload["flow_history"]) == 30
+
+
 def test_get_etf_flow_prefers_sosovalue_over_farside_when_key_is_set(
     monkeypatch,
     tmp_path,
