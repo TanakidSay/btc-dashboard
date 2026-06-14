@@ -337,6 +337,11 @@ Automatic ETF update notes:
   bot protection, so both endpoints are exempt from canonical-host redirects.
 - Manual workflow run: GitHub repository -> Actions -> `Update ETF flows` ->
   `Run workflow`.
+- Diagnostic source check: GitHub repository -> Actions -> `Update ETF flows`
+  -> `Run workflow` -> enable `diagnose_only`. This runs
+  `python scripts/update_etf_flows.py --diagnose-sources`, checks all live ETF
+  sources with GitHub secrets, prints source status/latest date/row count, and
+  does not post to `/api/admin/etf-flows` or modify production data.
 - Local dry run:
 
 ```powershell

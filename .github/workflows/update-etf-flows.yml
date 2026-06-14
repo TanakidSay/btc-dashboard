@@ -11,6 +11,12 @@ on:
     - cron: "30 3 * * 2-6"
     - cron: "30 5 * * 2-6"
   workflow_dispatch:
+    inputs:
+      diagnose_only:
+        description: "Check ETF sources without posting production updates"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   update-etf-flows:
@@ -35,5 +41,10 @@ jobs:
       - name: Install package
         run: python -m pip install -e .
 
+      - name: Diagnose ETF flow sources
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.diagnose_only }}
+        run: python scripts/update_etf_flows.py --diagnose-sources
+
       - name: Update production ETF flow data
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.diagnose_only }}
         run: python scripts/update_etf_flows.py

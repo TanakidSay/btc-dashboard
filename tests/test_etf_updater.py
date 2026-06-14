@@ -131,6 +131,84 @@ def test_fetch_live_etf_flow_rejects_all_fallback_sources(monkeypatch) -> None:
         update_etf_flows.fetch_live_etf_flow(settings)  # type: ignore[arg-type]
 
 
+def test_diagnose_live_etf_sources_reports_each_source(monkeypatch) -> None:
+    settings = SimpleNamespace(sosovalue_api_key="soso-key", coinglass_api_key=None)
+
+    for _, loader_name, _ in update_etf_flows.LIVE_SOURCE_LOADERS:
+        monkeypatch.setattr(
+            update_etf_flows.services,
+            loader_name,
+            lambda settings: {"source": "fallback", "is_fallback": True, "error": "unavailable"},
+        )
+    monkeypatch.setattr(
+        update_etf_flows.services,
+        "_get_etf_flow_from_sosovalue",
+        lambda settings: {
+            "source": "sosovalue",
+            "latest_date": "2026-06-12",
+            "flow_history": [{"date": "2026-06-12", "net_flow_usd": 85_900_000}],
+        },
+    )
+    monkeypatch.setattr(
+        update_etf_flows.services,
+        "_get_etf_flow_from_farside_latest",
+        lambda settings: {"source": "fallback", "is_fallback": True, "error": "blocked"},
+    )
+
+    results = update_etf_flows.diagnose_live_etf_sources(
+        settings,  # type: ignore[arg-type]
+        minimum_latest_date=datetime(2026, 6, 12, tzinfo=UTC).date(),
+    )
+
+    assert results[0] == {
+        "source": "sosovalue",
+        "status": "ok",
+        "latest_date": "2026-06-12",
+        "rows": 1,
+        "usable": True,
+        "error": "",
+    }
+    assert results[1]["source"] == "coinglass"
+    assert results[1]["status"] == "skipped"
+    assert results[2]["source"] == "farside-latest"
+    assert results[2]["status"] == "unusable"
+    assert results[2]["error"] == "blocked"
+
+
+def test_main_diagnose_sources_does_not_post_admin_payload(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(update_etf_flows.Settings, "from_env", lambda: object())
+    monkeypatch.setattr(
+        update_etf_flows,
+        "get_current_latest_date",
+        lambda base_url, timeout: "2026-06-12",
+    )
+    monkeypatch.setattr(
+        update_etf_flows,
+        "diagnose_live_etf_sources",
+        lambda settings, *, minimum_latest_date=None: [
+            {
+                "source": "sosovalue",
+                "status": "ok",
+                "latest_date": "2026-06-12",
+                "rows": 30,
+                "usable": True,
+                "error": "",
+            },
+        ],
+    )
+
+    def fail_post_admin(*args, **kwargs):
+        raise AssertionError("diagnostic mode must not post production updates")
+
+    monkeypatch.setattr(update_etf_flows, "post_admin_payload", fail_post_admin)
+
+    assert update_etf_flows.main(["--diagnose-sources", "--expected-date", "2026-06-12"]) == 0
+
+    captured = capsys.readouterr()
+    assert "ETF source diagnostics:" in captured.out
+    assert "- sosovalue: ok usable=true latest=2026-06-12 rows=30" in captured.out
+
+
 def test_main_succeeds_when_no_confirmed_etf_row_is_available(monkeypatch, capsys) -> None:
     monkeypatch.setattr(update_etf_flows.Settings, "from_env", lambda: object())
     monkeypatch.setattr(

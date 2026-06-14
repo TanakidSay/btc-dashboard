@@ -139,6 +139,74 @@ def fetch_live_etf_flow(
     )
 
 
+def diagnose_live_etf_sources(
+    settings: Settings,
+    *,
+    minimum_latest_date: date | None = None,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for source_name, loader_name, required_key in LIVE_SOURCE_LOADERS:
+        result: dict[str, Any] = {
+            "source": source_name,
+            "status": "unknown",
+            "latest_date": "",
+            "rows": 0,
+            "usable": False,
+            "error": "",
+        }
+        if required_key and not getattr(settings, required_key):
+            result.update({"status": "skipped", "error": "API key is not configured"})
+            results.append(result)
+            continue
+
+        loader = getattr(services, loader_name)
+        try:
+            payload = loader(settings)
+        except Exception as exc:
+            result.update({"status": "failed", "error": str(exc)})
+            results.append(result)
+            continue
+
+        if not isinstance(payload, dict):
+            result.update({"status": "failed", "error": "invalid source payload"})
+            results.append(result)
+            continue
+
+        history = payload.get("flow_history")
+        latest_date = parse_etf_payload_latest_date(payload)
+        usable = is_live_etf_payload(payload, minimum_latest_date=minimum_latest_date)
+        result.update({
+            "status": "ok" if usable else "unusable",
+            "latest_date": latest_date.isoformat() if latest_date else "",
+            "rows": len(history) if isinstance(history, list) else 0,
+            "usable": usable,
+            "error": str(payload.get("error") or ""),
+        })
+        if minimum_latest_date and latest_date and latest_date < minimum_latest_date:
+            result["error"] = (
+                f"latest row {latest_date.isoformat()} is older than expected "
+                f"{minimum_latest_date.isoformat()}"
+            )
+        elif not usable and not result["error"]:
+            result["error"] = "no usable live rows"
+        results.append(result)
+    return results
+
+
+def print_source_diagnostics(results: list[dict[str, Any]]) -> None:
+    print("ETF source diagnostics:")
+    for result in results:
+        line = (
+            f"- {result['source']}: {result['status']} "
+            f"usable={str(result['usable']).lower()} "
+            f"latest={result['latest_date'] or 'N/A'} "
+            f"rows={result['rows']}"
+        )
+        if result["error"]:
+            line += f" error={result['error']}"
+        print(line)
+
+
 def log_no_confirmed_row(exc: NoConfirmedEtfRow) -> None:
     print(str(exc), file=sys.stderr)
 
@@ -232,6 +300,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Allow posting the latest source row even if it is older than the expected date.",
     )
+    parser.add_argument(
+        "--diagnose-sources",
+        action="store_true",
+        help="Check all live ETF sources and print status without posting production updates.",
+    )
     return parser.parse_args(argv)
 
 
@@ -251,7 +324,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             current_latest_date = get_current_latest_date(args.base_url, args.timeout)
             current = services._parse_etf_date(current_latest_date)
-            if current and expected_date and current >= expected_date and not args.force:
+            if (
+                current
+                and expected_date
+                and current >= expected_date
+                and not args.force
+                and not args.diagnose_sources
+            ):
                 print(
                     "ETF flow already up to date at "
                     f"{current_latest_date}; skipping admin update.",
@@ -263,6 +342,11 @@ def main(argv: list[str] | None = None) -> int:
     minimum_latest_date = minimum_acceptable_latest_date(expected_date, current_latest_date)
     if minimum_latest_date:
         print(f"Minimum ETF flow date required: {minimum_latest_date.isoformat()}")
+
+    if args.diagnose_sources:
+        results = diagnose_live_etf_sources(settings, minimum_latest_date=minimum_latest_date)
+        print_source_diagnostics(results)
+        return 0
 
     try:
         live_payload = fetch_live_etf_flow(settings, minimum_latest_date=minimum_latest_date)
