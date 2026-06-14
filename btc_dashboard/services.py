@@ -1714,7 +1714,13 @@ def _get_etf_flow_from_sosovalue(settings: Settings) -> dict[str, Any]:
         )
         if body.get("code") != 0:
             raise ValueError(body.get("msg") or "SoSoValue returned non-zero code")
-        rows = (body.get("data") or {}).get("list") or []
+        data = body.get("data") or {}
+        if isinstance(data, list):
+            rows = data
+        elif isinstance(data, dict):
+            rows = data.get("list") or data.get("rows") or data.get("data") or []
+        else:
+            rows = []
         if not rows:
             raise ValueError("SoSoValue ETF response has no rows")
         history = []
