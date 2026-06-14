@@ -269,6 +269,12 @@ def main(argv: list[str] | None = None) -> int:
     except NoConfirmedEtfRow as exc:
         log_no_confirmed_row(exc)
         return 0
+    history = live_payload.get("flow_history") or []
+    print(
+        "ETF source selected: "
+        f"{live_payload.get('source')} latest={live_payload.get('latest_date')} "
+        f"rows={len(history)}",
+    )
     admin_payload = build_manual_payload(live_payload)
     latest_date = admin_payload["flow_history"][-1]["date"]
 

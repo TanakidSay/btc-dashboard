@@ -221,7 +221,9 @@ def test_main_continues_when_current_etf_check_is_blocked(monkeypatch, capsys) -
     assert posted["payload"]["flow_history"] == [
         {"date": "2026-05-18", "net_flow_usd": 123_000_000.0},
     ]
-    assert "Current ETF check failed; continuing" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert "Current ETF check failed; continuing" in captured.err
+    assert "ETF source selected: bitbo latest=2026-05-18 rows=1" in captured.out
 
 
 def test_minimum_acceptable_latest_date_allows_catch_up() -> None:
