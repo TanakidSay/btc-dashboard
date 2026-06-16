@@ -303,6 +303,32 @@ def test_private_key_is_not_rendered_in_frontend(monkeypatch, tmp_path) -> None:
     assert "api/private/daily-snapshot" not in js
 
 
+def test_private_daily_snapshot_page_is_separate_from_dashboard(monkeypatch, tmp_path) -> None:
+    secret = "private-secret-not-for-browser"
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, btcwindow_private_api_key=secret))
+    client = app.test_client()
+
+    dashboard = client.get("/").get_data(as_text=True)
+    private_page = client.get("/private/daily-snapshot").get_data(as_text=True)
+
+    assert "Copy Daily Snapshot" not in dashboard
+    assert "private_daily_snapshot.js" not in dashboard
+    assert "Daily Snapshot" in private_page
+    assert "Copy" in private_page
+    assert "private_daily_snapshot.js" in private_page
+    assert secret not in private_page
+    assert "X-BTCWINDOW-KEY" not in private_page
+
+
+def test_private_daily_snapshot_script_uses_hash_key_not_query_string() -> None:
+    script = Path("btc_dashboard/static/private_daily_snapshot.js").read_text(encoding="utf-8")
+
+    assert "window.location.hash" in script
+    assert "X-BTCWINDOW-KEY" in script
+    assert "window.location.search" not in script
+
+
 def test_health_check_stays_public_when_auth_is_enabled(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path, dashboard_api_token="token-123"))

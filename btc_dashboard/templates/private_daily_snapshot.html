@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Daily Snapshot | BTC Window</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gray-950 text-gray-100">
+    <main class="mx-auto flex min-h-screen max-w-2xl flex-col gap-4 px-4 py-6">
+        <header>
+            <p class="text-sm uppercase tracking-wide text-blue-300">BTC Window</p>
+            <h1 class="text-2xl font-bold">Daily Snapshot</h1>
+        </header>
+
+        <section class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
+            <div class="flex items-center justify-between gap-3">
+                <p id="snapshotStatus" class="text-sm text-gray-400">Loading...</p>
+                <button
+                    id="refreshSnapshot"
+                    type="button"
+                    class="rounded bg-gray-800 px-3 py-2 text-sm font-semibold text-gray-100 hover:bg-gray-700"
+                >
+                    Refresh
+                </button>
+            </div>
+            <textarea
+                id="snapshotText"
+                class="mt-4 min-h-96 w-full resize-y rounded border border-gray-800 bg-gray-950 p-3 font-mono text-sm leading-6 text-gray-100 outline-none"
+                readonly
+            ></textarea>
+            <button
+                id="copySnapshot"
+                type="button"
+                class="mt-4 w-full rounded bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-500"
+            >
+                Copy Daily Snapshot
+            </button>
+        </section>
+
+        <p class="text-xs text-gray-500">
+            Open this page with <span class="font-mono">#key=your_secret_key</span>. The key stays in the browser fragment and is not sent as a URL query.
+        </p>
+    </main>
+    <script src="{{ url_for('static', filename='private_daily_snapshot.js') }}"></script>
+</body>
+</html>

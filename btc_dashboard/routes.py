@@ -110,6 +110,11 @@ def sitemap_xml():
     return Response(body, mimetype="application/xml")
 
 
+@api.route("/private/daily-snapshot")
+def private_daily_snapshot_page():
+    return render_template("private_daily_snapshot.html")
+
+
 
 def _empty_fee_response():
     return {
