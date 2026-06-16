@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from hmac import compare_digest
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
@@ -146,6 +147,255 @@ def _latest_cached_block_height(fee_data: pd.DataFrame | None) -> int | None:
     if heights.empty:
         return None
     return int(heights.max())
+
+
+def _json_number(value, *, digits: int | None = None):
+    if value in (None, "", "N/A"):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if digits is not None:
+        numeric = round(numeric, digits)
+    return int(numeric) if numeric.is_integer() else numeric
+
+
+def _json_text(value):
+    if value in (None, "", "N/A"):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _daily_snapshot_authorized(settings: Settings) -> bool:
+    expected = settings.btcwindow_private_api_key or ""
+    provided = request.headers.get("X-BTCWINDOW-KEY", "")
+    return bool(expected and provided and compare_digest(provided, expected))
+
+
+def _is_us_etf_market_open(now: dt.datetime | None = None) -> bool:
+    current = now or dt.datetime.now(dt.UTC)
+    eastern = current.astimezone(ZoneInfo("America/New_York"))
+    if eastern.weekday() >= 5:
+        return False
+    market_open = eastern.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = eastern.replace(hour=16, minute=0, second=0, microsecond=0)
+    return market_open <= eastern < market_close
+
+
+def _fee_level(value) -> str | None:
+    fee = _json_number(value)
+    if fee is None:
+        return None
+    if fee <= 2:
+        return "Very Low"
+    if fee <= 5:
+        return "Low"
+    if fee <= 15:
+        return "Medium"
+    if fee <= 30:
+        return "High"
+    return "Extreme"
+
+
+def _risk_label(value) -> str | None:
+    text = _json_text(value)
+    return text.title() if text else None
+
+
+def _network_health(risk_level: str | None) -> str | None:
+    normalized = (risk_level or "").lower()
+    if normalized == "low":
+        return "Healthy"
+    if normalized == "medium":
+        return "Watch"
+    if normalized == "high":
+        return "Risk Elevated"
+    if normalized == "critical":
+        return "Critical"
+    return None
+
+
+def _safe_call(default, callback):
+    try:
+        return callback()
+    except Exception as exc:
+        current_app.logger.warning("daily snapshot field unavailable: %s", exc)
+        return default
+
+
+def _latest_fee_recommendation(fee_data):
+    if fee_data is None or fee_data.empty or "sat_per_vbyte" not in fee_data:
+        return _empty_fee_response()
+    fees = fee_data.tail(_settings().max_chart_rows)["sat_per_vbyte"].tolist()
+    return _fee_recommendation_from_history(fees)
+
+
+def _daily_snapshot_alerts(fear_greed, mvrv, fees, etf, market_open: bool) -> list[str]:
+    alerts: list[str] = []
+    fg_classification = _json_text(fear_greed.get("classification"))
+    fg_value = _json_number(fear_greed.get("value"))
+    if fg_classification and "Fear" in fg_classification:
+        alerts.append(f"Fear remains in {fg_classification} zone")
+    elif fg_classification and "Greed" in fg_classification:
+        alerts.append(f"Greed remains in {fg_classification} zone")
+    elif fg_value is not None:
+        alerts.append("Fear & Greed is neutral")
+
+    mvrv_zone_value = _json_text(mvrv.get("zone"))
+    if mvrv_zone_value:
+        alerts.append(f"MVRV remains in {mvrv_zone_value.lower()} territory")
+
+    fee_level = _json_text(fees.get("level"))
+    if fee_level:
+        alerts.append(f"Fees remain {fee_level.lower()}")
+
+    if market_open:
+        etf_status = _json_text(etf.get("status"))
+        if etf_status:
+            alerts.append(f"ETF flow is showing {etf_status.lower()}")
+    return alerts[:5]
+
+
+def _build_snapshot_text(snapshot_payload: dict) -> str:
+    lines = ["⚡ Daily Bitcoin Check", ""]
+    price = snapshot_payload.get("btc_price")
+    if price is not None:
+        lines.append(f"₿ BTC: ${price:,.0f}")
+    fear_greed = snapshot_payload.get("fear_greed") or {}
+    if fear_greed.get("value") is not None:
+        label = fear_greed.get("classification") or "sentiment"
+        lines.append(f"😱 Fear & Greed: {fear_greed['value']} ({label})")
+    mvrv = snapshot_payload.get("mvrv") or {}
+    if mvrv.get("value") is not None:
+        zone = mvrv.get("zone") or "cycle signal"
+        lines.append(f"📊 MVRV: {mvrv['value']} ({zone})")
+    fees = snapshot_payload.get("fees") or {}
+    if fees.get("level") is not None:
+        lines.append(f"💸 Fees: {fees['level']}")
+    etf = snapshot_payload.get("etf") or {}
+    if etf.get("market_open") and etf.get("flow_usd_m") is not None:
+        lines.append(f"🏦 ETF Flow: ${etf['flow_usd_m']:,.2f}M {etf.get('status') or ''}".strip())
+
+    lines.extend([
+        "",
+        _daily_snapshot_takeaway(snapshot_payload),
+        "",
+        "Built for Generational Wealth.",
+        "",
+        "btcwindow.uk",
+        "",
+        "#Bitcoin #BTC #BTCWindow",
+    ])
+    return "\n".join(lines)
+
+
+def _daily_snapshot_takeaway(snapshot_payload: dict) -> str:
+    fear_value = _json_number((snapshot_payload.get("fear_greed") or {}).get("value"))
+    mvrv_zone_value = _json_text((snapshot_payload.get("mvrv") or {}).get("zone"))
+    fee_level = _json_text((snapshot_payload.get("fees") or {}).get("level"))
+    if fear_value is not None and fear_value <= 25 and mvrv_zone_value == "Accumulation":
+        return "The timeline feels bearish. The data does not."
+    if fee_level in {"Very Low", "Low"}:
+        return "Bitcoin network conditions remain easy to use today."
+    return "Bitcoin market data is mixed, but the signal is worth watching."
+
+
+def _build_daily_snapshot(settings: Settings) -> dict:
+    data = snapshot()
+    fee_data = data.get("fee_data")
+    block_height = get_current_block_height(settings, _latest_cached_block_height(fee_data))
+    fees = _latest_fee_recommendation(fee_data)
+    security = _safe_call({}, lambda: get_security_overview(settings))
+    attack_51 = security.get("attack_51") or {}
+    fear_greed = _safe_call({}, lambda: get_fear_greed_index(settings))
+    mvrv = _safe_call({}, lambda: get_mvrv_summary(settings))
+    etf_payload = _safe_call({}, lambda: get_etf_flow(settings))
+    treasury = _safe_call({}, lambda: get_btc_treasury_holdings(settings))
+    top_holder = (treasury.get("top_holders") or [{}])[0] if isinstance(treasury, dict) else {}
+    halving = halving_countdown(block_height)
+    market_open = _is_us_etf_market_open()
+    hashrate_value = _json_number(data.get("hashrate"))
+    etf_flow_usd = _json_number(etf_payload.get("latest_net_flow_usd"))
+
+    payload = {
+        "date": dt.datetime.now(dt.UTC).date().isoformat(),
+        "btc_price": _json_number(data.get("btc_price"), digits=2),
+        "price_change_24h_pct": _json_number(data.get("btc_change_24h_percent"), digits=2),
+        "fear_greed": {
+            "value": _json_number(fear_greed.get("value")),
+            "classification": _json_text(fear_greed.get("classification")),
+        },
+        "mvrv": {
+            "value": _json_number(mvrv.get("value"), digits=2),
+            "zone": _json_text(mvrv.get("zone")),
+        },
+        "network": {
+            "hashrate_ehs": _json_number(
+                (hashrate_value / 1_000_000) if hashrate_value is not None else None,
+                digits=2,
+            ),
+            "nodes": _json_number(data.get("node_count")),
+            "health": _network_health(_json_text(attack_51.get("risk_level"))),
+            "attack_risk_percent": _json_number(attack_51.get("top_pool_share"), digits=2),
+            "attack_risk_level": _risk_label(attack_51.get("risk_level")),
+        },
+        "fees": {
+            "next_block_sat_vb": _json_number(fees.get("fastestFee"), digits=1),
+            "thirty_min_sat_vb": _json_number(fees.get("halfHourFee"), digits=1),
+            "one_hour_sat_vb": _json_number(fees.get("hourFee"), digits=1),
+            "level": _fee_level(fees.get("fastestFee")),
+        },
+        "etf": {
+            "flow_usd_m": _json_number(
+                (etf_flow_usd / 1_000_000) if etf_flow_usd is not None else None,
+                digits=2,
+            ),
+            "status": _risk_label(etf_payload.get("trend")),
+            "latest_date": _json_text(etf_payload.get("latest_date")),
+            "market_open": market_open,
+        },
+        "lightning": {
+            "nodes": None,
+            "channels": None,
+            "capacity_btc": None,
+            "capacity_usd_m": None,
+        },
+        "ownership": {
+            "treasury_btc": _json_number(treasury.get("total_btc_held")),
+            "top_holder": _json_text(top_holder.get("name")),
+            "top_holder_btc": _json_number(top_holder.get("btc_held")),
+        },
+        "blockchain": {
+            "latest_block": _json_number(block_height),
+            "avg_block_time_min": None,
+            "difficulty_change_estimate_pct": None,
+            "retarget_blocks_left": (
+                int(2016 - (block_height % 2016)) if isinstance(block_height, int) else None
+            ),
+            "next_halving_block": halving.get("next_halving_block"),
+            "blocks_remaining": halving.get("blocks_remaining"),
+            "halving_eta_days": halving.get("halving_eta_days"),
+        },
+    }
+    payload["alerts"] = _daily_snapshot_alerts(
+        payload["fear_greed"],
+        payload["mvrv"],
+        payload["fees"],
+        payload["etf"],
+        market_open,
+    )
+    payload["snapshot_text"] = _build_snapshot_text(payload)
+    return payload
+
+
+@api.route("/api/private/daily-snapshot")
+def api_daily_snapshot():
+    settings = _settings()
+    if not _daily_snapshot_authorized(settings):
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify(_build_daily_snapshot(settings))
 
 
 @api.route("/api/fees")

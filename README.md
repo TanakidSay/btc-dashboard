@@ -202,6 +202,14 @@ The endpoint validates the JSON payload, writes `ETF_FLOW_FILE` atomically, and
 clears the ETF cache so the dashboard can show updated manual ETF data without a
 redeploy.
 
+`BTCWINDOW_PRIVATE_API_KEY` enables the private daily snapshot endpoint
+`GET /api/private/daily-snapshot`. The endpoint is intended for owner-only
+automation and requires the `X-BTCWINDOW-KEY` header:
+
+```bash
+curl -H "X-BTCWINDOW-KEY: your_secret_key" https://btcwindow.uk/api/private/daily-snapshot
+```
+
 Treasury data is cached for 24 hours because public treasury holdings are a
 slow-moving institutional signal, not a realtime feed. If CoinGecko returns a
 rate limit or other source error, the dashboard keeps serving cached/stale

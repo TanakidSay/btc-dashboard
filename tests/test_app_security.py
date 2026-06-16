@@ -4,6 +4,8 @@ import json
 from base64 import b64encode
 from pathlib import Path
 
+import pandas as pd
+
 from btc_dashboard.app import create_app
 from btc_dashboard.config import Settings
 from btc_dashboard.services import MetricValue, state
@@ -105,6 +107,200 @@ def test_bearer_token_allows_api_access(monkeypatch, tmp_path) -> None:
     )
 
     assert response.status_code == 200
+
+
+def _daily_snapshot_snapshot():
+    return {
+        "fee_data": pd.DataFrame({
+            "height": [953_630, 953_631, 953_632],
+            "sat_per_vbyte": [1.6, 1.8, 3.3],
+        }),
+        "table_html": "",
+        "hashrate": 875_460_000,
+        "node_count": 17_353,
+        "btc_price": 64_583,
+        "btc_change_24h_usd": 192,
+        "btc_change_24h_percent": 0.3,
+        "btc_price_source": "cache",
+        "btc_price_is_cached": False,
+        "hashrate_history": [],
+        "price_history": [],
+        "time_labels": [],
+        "price_points": [],
+        "hashrate_points": [],
+        "metric_timestamps": {},
+    }
+
+
+def _patch_daily_snapshot_sources(monkeypatch) -> None:
+    monkeypatch.setattr("btc_dashboard.routes.snapshot", _daily_snapshot_snapshot)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_security_overview",
+        lambda settings: {
+            "attack_51": {"top_pool_share": 24.81, "risk_level": "medium"},
+        },
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_fear_greed_index",
+        lambda settings: {"value": 18, "classification": "Extreme Fear"},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_mvrv_summary",
+        lambda settings: {"value": 1.21, "zone": "Accumulation"},
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_etf_flow",
+        lambda settings: {
+            "latest_net_flow_usd": 85_849_837.77,
+            "trend": "inflow",
+            "latest_date": "2026-06-12",
+        },
+    )
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_btc_treasury_holdings",
+        lambda settings: {
+            "total_btc_held": 1_271_929,
+            "top_holders": [{"name": "Strategy", "btc_held": 843_738}],
+        },
+    )
+    monkeypatch.setattr("btc_dashboard.routes._is_us_etf_market_open", lambda now=None: False)
+
+
+def test_private_daily_snapshot_requires_header(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, btcwindow_private_api_key="secret-key"))
+
+    response = app.test_client().get("/api/private/daily-snapshot")
+
+    assert response.status_code == 401
+
+
+def test_private_daily_snapshot_rejects_wrong_key(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, btcwindow_private_api_key="secret-key"))
+
+    response = app.test_client().get(
+        "/api/private/daily-snapshot",
+        headers={"X-BTCWINDOW-KEY": "wrong-key"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_private_daily_snapshot_returns_clean_json_for_correct_key(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    _patch_daily_snapshot_sources(monkeypatch)
+    app = create_app(_settings(tmp_path, btcwindow_private_api_key="secret-key"))
+
+    response = app.test_client().get(
+        "/api/private/daily-snapshot",
+        headers={"X-BTCWINDOW-KEY": "secret-key"},
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["btc_price"] == 64_583
+    assert body["price_change_24h_pct"] == 0.3
+    assert body["fear_greed"] == {"value": 18, "classification": "Extreme Fear"}
+    assert body["mvrv"] == {"value": 1.21, "zone": "Accumulation"}
+    assert body["network"] == {
+        "hashrate_ehs": 875.46,
+        "nodes": 17_353,
+        "health": "Watch",
+        "attack_risk_percent": 24.81,
+        "attack_risk_level": "Medium",
+    }
+    assert body["fees"] == {
+            "next_block_sat_vb": 3.3,
+            "thirty_min_sat_vb": 1.8,
+            "one_hour_sat_vb": 1.7,
+            "level": "Low",
+        }
+    assert body["etf"] == {
+        "flow_usd_m": 85.85,
+        "status": "Inflow",
+        "latest_date": "2026-06-12",
+        "market_open": False,
+    }
+    assert body["ownership"] == {
+        "treasury_btc": 1_271_929,
+        "top_holder": "Strategy",
+        "top_holder_btc": 843_738,
+    }
+    assert body["blockchain"]["latest_block"] == 953_632
+    assert body["blockchain"]["retarget_blocks_left"] == 1_952
+    assert body["lightning"] == {
+        "nodes": None,
+        "channels": None,
+        "capacity_btc": None,
+        "capacity_usd_m": None,
+    }
+    assert "ETF Flow" not in body["snapshot_text"]
+    assert "BTCWindow" in body["snapshot_text"]
+    assert "N/A" not in json.dumps(body)
+
+
+def test_private_daily_snapshot_missing_data_returns_nulls(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.snapshot",
+        lambda: {
+            "fee_data": None,
+            "table_html": "",
+            "hashrate": None,
+            "node_count": None,
+            "btc_price": None,
+            "btc_change_24h_percent": None,
+            "price_history": [],
+            "metric_timestamps": {},
+        },
+    )
+    for name in (
+        "get_security_overview",
+        "get_fear_greed_index",
+        "get_mvrv_summary",
+        "get_etf_flow",
+        "get_btc_treasury_holdings",
+    ):
+        monkeypatch.setattr(
+            f"btc_dashboard.routes.{name}",
+            lambda settings: (_ for _ in ()).throw(RuntimeError("missing")),
+        )
+    monkeypatch.setattr("btc_dashboard.routes.get_current_block_height", lambda *args: None)
+    app = create_app(_settings(tmp_path, btcwindow_private_api_key="secret-key"))
+
+    response = app.test_client().get(
+        "/api/private/daily-snapshot",
+        headers={"X-BTCWINDOW-KEY": "secret-key"},
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["btc_price"] is None
+    assert body["fear_greed"] == {"value": None, "classification": None}
+    assert body["mvrv"] == {"value": None, "zone": None}
+    assert body["network"]["hashrate_ehs"] is None
+    assert body["fees"]["next_block_sat_vb"] is None
+    assert body["etf"]["flow_usd_m"] is None
+    assert body["ownership"]["treasury_btc"] is None
+    assert body["blockchain"]["latest_block"] is None
+    assert "N/A" not in json.dumps(body)
+
+
+def test_private_key_is_not_rendered_in_frontend(monkeypatch, tmp_path) -> None:
+    secret = "private-secret-not-for-browser"
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path, btcwindow_private_api_key=secret))
+
+    response = app.test_client().get("/")
+    html = response.get_data(as_text=True)
+    js = Path("btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+
+    assert response.status_code == 200
+    assert secret not in html
+    assert secret not in js
+    assert "Copy Daily Snapshot" not in html
+    assert "api/private/daily-snapshot" not in js
 
 
 def test_health_check_stays_public_when_auth_is_enabled(monkeypatch, tmp_path) -> None:
