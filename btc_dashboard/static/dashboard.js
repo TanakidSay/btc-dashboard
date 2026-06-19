@@ -74,6 +74,21 @@ function formatCompactUsd(value) {
     return `${sign}$${abs.toFixed(2)}`;
 }
 
+function formatSignedCompactUsd(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "N/A";
+    const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
+    const abs = Math.abs(numeric);
+    const compactNumber = (scaled) => scaled.toLocaleString(undefined, {
+        maximumFractionDigits: 2,
+    });
+    if (abs >= 1_000_000_000_000) return `${sign}$${compactNumber(abs / 1_000_000_000_000)}T`;
+    if (abs >= 1_000_000_000) return `${sign}$${compactNumber(abs / 1_000_000_000)}B`;
+    if (abs >= 1_000_000) return `${sign}$${compactNumber(abs / 1_000_000)}M`;
+    if (abs >= 1_000) return `${sign}$${compactNumber(abs / 1_000)}K`;
+    return `${sign}$${compactNumber(abs)}`;
+}
+
 function formatBtc(value) {
     if (value === undefined || value === null || value === "" || value === "N/A") return "N/A";
     const numeric = Number(value);
@@ -793,11 +808,71 @@ function institutionalInsight(etfData, treasuryData, priceData) {
     return "Institutional signal is neutral until fresh ETF or treasury data is available.";
 }
 
+function etfNumericHistory(etfData) {
+    return (etfData?.flow_history ?? [])
+        .map((row) => Number(row?.net_flow_usd))
+        .filter((value) => Number.isFinite(value));
+}
+
+function etfFlowSum(values, days) {
+    if (!values.length) return null;
+    return values.slice(-days).reduce((total, value) => total + value, 0);
+}
+
+function etfFlowStreak(values) {
+    if (!values.length) return { label: "⚪ No Streak", direction: "neutral" };
+    const latest = values.at(-1);
+    if (latest === 0) return { label: "⚪ No Streak", direction: "neutral" };
+
+    const direction = latest > 0 ? "inflow" : "outflow";
+    let count = 0;
+    for (let index = values.length - 1; index >= 0; index -= 1) {
+        if ((direction === "inflow" && values[index] <= 0) || (direction === "outflow" && values[index] >= 0)) break;
+        count += 1;
+    }
+
+    const marker = direction === "inflow" ? "🟢" : "🔴";
+    const label = direction === "inflow" ? "Inflow" : "Outflow";
+    return { label: `${marker} ${count} Days ${label}`, direction };
+}
+
+function setEtfTrendValue(id, value, direction = null) {
+    const element = document.getElementById(id);
+    if (!element) return;
+
+    const numeric = Number(value);
+    const hasValue = Number.isFinite(numeric);
+    const colorDirection = direction ?? (hasValue && numeric > 0 ? "inflow" : hasValue && numeric < 0 ? "outflow" : "neutral");
+    element.textContent = hasValue ? formatSignedCompactUsd(numeric) : "N/A";
+    element.className = colorDirection === "inflow"
+        ? "block font-semibold text-green-400"
+        : colorDirection === "outflow"
+        ? "block font-semibold text-red-400"
+        : "block font-semibold text-gray-500";
+}
+
+function renderEtfTrendSummary(etfData) {
+    const values = etfNumericHistory(etfData);
+    setEtfTrendValue("etfFlow7d", etfFlowSum(values, 7));
+    setEtfTrendValue("etfFlow30d", etfFlowSum(values, 30));
+
+    const streak = etfFlowStreak(values);
+    const streakEl = document.getElementById("etfFlowStreak");
+    if (!streakEl) return;
+    streakEl.textContent = values.length ? streak.label : "N/A";
+    streakEl.className = streak.direction === "inflow"
+        ? "block font-semibold text-green-400"
+        : streak.direction === "outflow"
+        ? "block font-semibold text-red-400"
+        : "block font-semibold text-gray-500";
+}
+
 function renderInstitutionalCards(etfData, treasuryData, priceData) {
     document.getElementById("etfNetFlow").innerText = formatCompactUsd(etfData.latest_net_flow_usd);
     const etfSource = etfData.source_label ?? etfData.source ?? "fallback";
     const latestDate = etfData.latest_date ? ` | Latest: ${etfData.latest_date}` : "";
     document.getElementById("etfFlowSource").innerText = `${formatMinutesAgo(etfData.updated_at)} | Source: ${etfSource}${latestDate}`;
+    renderEtfTrendSummary(etfData);
 
     const status = etfData.trend ?? etfData.status ?? "neutral";
     const statusEl = document.getElementById("etfFlowStatus");

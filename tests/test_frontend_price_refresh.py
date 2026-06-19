@@ -47,9 +47,18 @@ def test_frontend_renders_etf_source_label_and_note() -> None:
 
     assert "etfFlowSource" in dashboard_html
     assert "etfFlowNote" in dashboard_html
+    assert "etfFlow7d" in dashboard_html
+    assert "etfFlow30d" in dashboard_html
+    assert "etfFlowStreak" in dashboard_html
+    assert "ETF Trend" not in dashboard_html
     assert "etfData.source_label" in dashboard_js
     assert "etfData.data_note" in dashboard_js
     assert "etfData.is_fallback || etfData.is_stale" in dashboard_js
+    assert "renderEtfTrendSummary(etfData)" in dashboard_js
+    assert "formatSignedCompactUsd" in dashboard_js
+    assert "🟢" in dashboard_js
+    assert "🔴" in dashboard_js
+    assert "⚪ No Streak" in dashboard_js
 
 
 def test_frontend_institutional_insight_uses_etf_trend() -> None:
