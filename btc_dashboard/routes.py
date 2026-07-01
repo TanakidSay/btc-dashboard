@@ -17,6 +17,7 @@ from .services import (
     get_btc_price_result,
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
+    get_btc_trend_zone,
     get_current_block_height,
     get_etf_flow,
     get_fear_greed_index,
@@ -511,6 +512,36 @@ def api_price():
             "updated_at": None,
             "source": "fallback",
             "is_cached": True,
+        })
+
+
+@api.route("/api/btc-trend-zone")
+def api_btc_trend_zone():
+    timeframe = request.args.get("tf", "1d")
+    try:
+        return jsonify(get_btc_trend_zone(_settings(), timeframe))
+    except Exception as exc:
+        current_app.logger.exception(
+            "/api/btc-trend-zone returning fallback timeframe=%s error=%s",
+            timeframe,
+            exc,
+        )
+        normalized = str(timeframe or "1d").lower()
+        if normalized not in {"1h", "4h", "1d", "1w"}:
+            normalized = "1d"
+        return jsonify({
+            "timeframe": normalized.upper(),
+            "signal": "Unavailable",
+            "zone": "unknown",
+            "confidence": 0,
+            "latest_price": None,
+            "ema12": None,
+            "ema26": None,
+            "data": [],
+            "status": "error",
+            "source": "fallback",
+            "updated_at": None,
+            "error": "Trend data temporarily unavailable.",
         })
 
 

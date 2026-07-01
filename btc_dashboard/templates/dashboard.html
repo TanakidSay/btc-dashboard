@@ -353,7 +353,23 @@
 
     <section class="mb-6 grid grid-cols-1 gap-6 md:grid-cols-2" aria-label="Charts">
         <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow md:col-span-2">
-            <h2 class="mb-2 font-semibold">BTC Price</h2>
+            <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                    <h2 class="font-semibold">BTC Trend</h2>
+                    <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400">
+                        <span id="btcTrendSignal" class="font-semibold text-gray-300">Trend data temporarily unavailable.</span>
+                        <span id="btcTrendConfidence">Confidence: -</span>
+                        <span id="btcTrendTimeframe">Timeframe: 1D</span>
+                    </div>
+                </div>
+                <div class="flex gap-2" aria-label="BTC trend timeframe">
+                    <button type="button" class="btc-trend-tf rounded border border-gray-700 px-3 py-1 text-xs font-semibold text-gray-300 transition hover:border-amber-400" data-timeframe="1h">1H</button>
+                    <button type="button" class="btc-trend-tf rounded border border-gray-700 px-3 py-1 text-xs font-semibold text-gray-300 transition hover:border-amber-400" data-timeframe="4h">4H</button>
+                    <button type="button" class="btc-trend-tf rounded border border-amber-400 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-200 transition hover:border-amber-400" data-timeframe="1d">1D</button>
+                    <button type="button" class="btc-trend-tf rounded border border-gray-700 px-3 py-1 text-xs font-semibold text-gray-300 transition hover:border-amber-400" data-timeframe="1w">1W</button>
+                </div>
+            </div>
+            <p id="btcTrendFallback" class="mb-2 hidden text-xs text-amber-300">Trend data temporarily unavailable.</p>
             <div class="h-72"><canvas id="priceChart"></canvas></div>
         </article>
         <article class="rounded-lg border border-gray-800 bg-gray-900 p-4 shadow">
@@ -555,6 +571,6 @@
         </p>
     </footer>
 </main>
-<script src="{{ url_for('static', filename='dashboard.js', v='20260619-1') }}"></script>
+<script src="{{ url_for('static', filename='dashboard.js', v='20260701-1') }}"></script>
 </body>
 </html>

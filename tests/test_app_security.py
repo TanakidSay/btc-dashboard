@@ -693,6 +693,62 @@ def test_price_route_returns_change_fields(monkeypatch, tmp_path) -> None:
     assert body["is_cached"] is False
 
 
+def test_btc_trend_zone_route_returns_payload(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    monkeypatch.setattr(
+        "btc_dashboard.routes.get_btc_trend_zone",
+        lambda settings, timeframe: {
+            "timeframe": timeframe.upper(),
+            "signal": "Bullish",
+            "zone": "green",
+            "confidence": 88,
+            "latest_price": 59338,
+            "ema12": 59000,
+            "ema26": 58500,
+            "data": [{
+                "time": "2026-07-01",
+                "open": 59000,
+                "high": 60000,
+                "low": 58500,
+                "close": 59338,
+                "ema12": 59000,
+                "ema26": 58500,
+                "zone": "green",
+            }],
+        },
+    )
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/btc-trend-zone?tf=1d")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["timeframe"] == "1D"
+    assert body["signal"] == "Bullish"
+    assert body["zone"] == "green"
+    assert body["confidence"] == 88
+    assert body["data"][0]["close"] == 59338
+
+
+def test_btc_trend_zone_route_fallback(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+
+    def fail(settings, timeframe):
+        raise RuntimeError("source unavailable")
+
+    monkeypatch.setattr("btc_dashboard.routes.get_btc_trend_zone", fail)
+    app = create_app(_settings(tmp_path))
+
+    response = app.test_client().get("/api/btc-trend-zone?tf=4h")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["timeframe"] == "4H"
+    assert body["status"] == "error"
+    assert body["data"] == []
+    assert body["error"] == "Trend data temporarily unavailable."
+
+
 def test_x_status_route_reports_configuration(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path, enable_x_posting=True, x_api_key="key"))
@@ -937,7 +993,7 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Security" in html
     assert "networkSecuritySummary" in html
     assert "dashboard.js" in html
-    assert "20260619-1" in html
+    assert "20260701-1" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
     assert 'rel="canonical"' in html
     assert 'property="og:title"' in html

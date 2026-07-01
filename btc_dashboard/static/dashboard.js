@@ -5,6 +5,7 @@ let txChart;
 let etfFlowChart;
 let supplyOwnershipChart;
 let mvrvChart;
+let btcTrendTimeframe = "1d";
 let mvrvHistoryLoaded = false;
 let mvrvHistoryLoading = false;
 let etfFlowChartLoaded = false;
@@ -337,6 +338,7 @@ async function updateSecurity() {
 }
 
 async function fetchPrice() { return fetchJson("/api/price"); }
+async function fetchBtcTrend(timeframe = "1d") { return fetchJson(`/api/btc-trend-zone?tf=${encodeURIComponent(timeframe)}`); }
 
 function renderBtcPriceCard(data) {
     const latest = data.price_usd ?? data.latest;
@@ -362,29 +364,146 @@ function renderBtcPriceCard(data) {
     if (timestamp) timestamp.innerText = `Updated: ${data.updated_at ? formatDateTime(data.updated_at) : "N/A"}`;
 }
 
-async function initPriceChart() {
-    let data = { time: [], price: [], price_usd: "N/A", latest: "N/A" };
-    try {
-        data = await fetchPrice();
-    } catch (error) {
-        console.error("Failed to initialize BTC price chart", error);
+function btcTrendZoneColor(zone) {
+    return {
+        green: "#22c55e",
+        yellow: "#f59e0b",
+        blue: "#38bdf8",
+        red: "#ef4444",
+    }[zone] || "#9ca3af";
+}
+
+function btcTrendZoneIcon(zone) {
+    return {
+        green: "🟢",
+        yellow: "🟡",
+        blue: "🔵",
+        red: "🔴",
+    }[zone] || "";
+}
+
+function btcTrendChartData(rows) {
+    const labels = rows.map((row) => formatChartTimeLabel(row.time));
+    const pointColors = rows.map((row) => btcTrendZoneColor(row.zone));
+    return {
+        labels,
+        datasets: [
+            {
+                label: "BTC Close",
+                data: rows.map((row) => row.close),
+                borderColor: "#f8fafc",
+                backgroundColor: "rgba(248,250,252,0.08)",
+                pointBackgroundColor: pointColors,
+                pointBorderColor: pointColors,
+                pointRadius: 2,
+                tension: 0.2,
+                fill: true,
+            },
+            {
+                label: "EMA 12",
+                data: rows.map((row) => row.ema12),
+                borderColor: "#22c55e",
+                backgroundColor: "rgba(34,197,94,0.08)",
+                pointRadius: 0,
+                tension: 0.2,
+            },
+            {
+                label: "EMA 26",
+                data: rows.map((row) => row.ema26),
+                borderColor: "#f59e0b",
+                backgroundColor: "rgba(245,158,11,0.08)",
+                pointRadius: 0,
+                tension: 0.2,
+            },
+        ],
+    };
+}
+
+function btcTrendChartOptions() {
+    return {
+        ...sharedChartOptions,
+        scales: {
+            ...sharedChartOptions.scales,
+            y: {
+                ...sharedChartOptions.scales.y,
+                beginAtZero: false,
+                ticks: {
+                    ...sharedChartOptions.scales.y.ticks,
+                    callback: (value) => formatCompactUsd(value),
+                },
+            },
+        },
+    };
+}
+
+function renderBtcTrendSummary(data) {
+    const signalEl = document.getElementById("btcTrendSignal");
+    const confidenceEl = document.getElementById("btcTrendConfidence");
+    const timeframeEl = document.getElementById("btcTrendTimeframe");
+    const fallbackEl = document.getElementById("btcTrendFallback");
+    const zone = data.zone ?? "unknown";
+    const signal = data.signal ?? "Unavailable";
+    if (signalEl) {
+        signalEl.textContent = `${btcTrendZoneIcon(zone)} ${signal}`.trim();
+        signalEl.style.color = btcTrendZoneColor(zone);
     }
+    if (confidenceEl) confidenceEl.textContent = `Confidence: ${Number(data.confidence) || 0}%`;
+    if (timeframeEl) timeframeEl.textContent = `Timeframe: ${data.timeframe ?? btcTrendTimeframe.toUpperCase()}`;
+    if (fallbackEl) {
+        const unavailable = !Array.isArray(data.data) || data.data.length === 0 || data.status === "error";
+        fallbackEl.textContent = data.error || "Trend data temporarily unavailable.";
+        fallbackEl.classList.toggle("hidden", !unavailable);
+    }
+}
+
+function setBtcTrendActiveTimeframe(timeframe) {
+    document.querySelectorAll(".btc-trend-tf").forEach((button) => {
+        const active = button.dataset.timeframe === timeframe;
+        button.className = active
+            ? "btc-trend-tf rounded border border-amber-400 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-200 transition hover:border-amber-400"
+            : "btc-trend-tf rounded border border-gray-700 px-3 py-1 text-xs font-semibold text-gray-300 transition hover:border-amber-400";
+    });
+}
+
+function initBtcTrendTimeframeButtons() {
+    setBtcTrendActiveTimeframe(btcTrendTimeframe);
+    document.querySelectorAll(".btc-trend-tf").forEach((button) => {
+        if (button.dataset.bound === "true") return;
+        button.dataset.bound = "true";
+        button.addEventListener("click", async () => {
+            btcTrendTimeframe = button.dataset.timeframe || "1d";
+            setBtcTrendActiveTimeframe(btcTrendTimeframe);
+            await updatePriceChart();
+        });
+    });
+}
+
+async function initPriceChart() {
+    let data = { timeframe: "1D", signal: "Unavailable", zone: "unknown", confidence: 0, data: [] };
+    try {
+        data = await fetchBtcTrend(btcTrendTimeframe);
+    } catch (error) {
+        console.error("Failed to initialize BTC trend chart", error);
+    }
+    const trendRows = data.data ?? [];
     priceChart = new Chart(document.getElementById("priceChart"), {
         type: "line",
-        data: { labels: data.time ?? [], datasets: [{ label: "BTC Price", data: data.history ?? [], borderColor: "#22c55e", backgroundColor: "rgba(34,197,94,0.12)", tension: 0.25, fill: true }] },
-        options: sharedChartOptions,
+        data: btcTrendChartData(trendRows),
+        options: btcTrendChartOptions(),
     });
-    renderBtcPriceCard(data);
+    renderBtcTrendSummary(data);
+    initBtcTrendTimeframeButtons();
 }
 
 async function updatePriceChart() {
     try {
-        const data = await fetchPrice();
-        priceChart.data.labels = data.time ?? [];
-        priceChart.data.datasets[0].data = data.history ?? [];
+        const data = await fetchBtcTrend(btcTrendTimeframe);
+        priceChart.data = btcTrendChartData(data.data ?? []);
+        renderBtcTrendSummary(data);
         priceChart.update();
     } catch (error) {
-        console.error("Failed to update BTC price", error);
+        console.error("Failed to update BTC trend", error);
+        renderBtcTrendSummary({ timeframe: btcTrendTimeframe.toUpperCase(), signal: "Unavailable", zone: "unknown", confidence: 0, data: [], error: "Trend data temporarily unavailable." });
     }
 }
 

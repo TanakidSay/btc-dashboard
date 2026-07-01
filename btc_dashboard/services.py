@@ -54,6 +54,19 @@ BANGKOK_UTC_OFFSET_HOURS = 7
 BANGKOK_PRICE_BASELINE_HOUR = 7
 SATS_PER_BTC = 100_000_000
 BTC_PRICE_TTL_SECONDS = 5
+BTC_TREND_CANDLE_LIMIT = 500
+BTC_TREND_TIMEFRAMES = {
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1d",
+    "1w": "1w",
+}
+BTC_TREND_ZONE_TTLS = {
+    "1h": 5 * 60,
+    "4h": 15 * 60,
+    "1d": 60 * 60,
+    "1w": 6 * 60 * 60,
+}
 FEE_MEMPOOL_TTL_SECONDS = 30
 HASHRATE_TTL_SECONDS = 10 * 60
 NODE_COUNT_TTL_SECONDS = 30 * 60
@@ -67,6 +80,7 @@ VIEWER_ANALYTICS_RETENTION_DAYS = 30
 BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
 BINANCE_BTC_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
+BINANCE_BTC_KLINES_URL = "https://api.binance.com/api/v3/klines"
 COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/flow-history"
 SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
@@ -1599,6 +1613,188 @@ def _get_btc_price_from_coingecko(settings: Settings) -> float:
         change_usd = current_price - previous_price
         return MetricValue(current_price, "coingecko", change_usd, percent)
     return MetricValue(current_price, "coingecko")
+
+
+def get_btc_trend_zone(settings: Settings, timeframe: str = "1d") -> dict[str, Any]:
+    tf = _normalize_btc_trend_timeframe(timeframe)
+    return _cached_for(
+        f"btc_trend_zone_{tf}",
+        BTC_TREND_ZONE_TTLS[tf],
+        lambda: _get_btc_trend_zone_from_binance(settings, tf),
+        f"BTC trend zone refreshed timeframe={tf}",
+    )
+
+
+def _normalize_btc_trend_timeframe(timeframe: str | None) -> str:
+    tf = str(timeframe or "1d").lower()
+    return tf if tf in BTC_TREND_TIMEFRAMES else "1d"
+
+
+def _get_btc_trend_zone_from_binance(settings: Settings, timeframe: str) -> dict[str, Any]:
+    params = {
+        "symbol": "BTCUSDT",
+        "interval": BTC_TREND_TIMEFRAMES[timeframe],
+        "limit": BTC_TREND_CANDLE_LIMIT,
+    }
+    logger.info("BTC trend Binance request url=%s params=%s", BINANCE_BTC_KLINES_URL, params)
+    response = requests.get(
+        BINANCE_BTC_KLINES_URL,
+        headers=API_HEADERS,
+        params=params,
+        timeout=settings.request_timeout,
+    )
+    logger.info(
+        "BTC trend Binance response url=%s status_code=%s",
+        getattr(response, "url", BINANCE_BTC_KLINES_URL),
+        getattr(response, "status_code", "unknown"),
+    )
+    response.raise_for_status()
+    rows = response.json()
+    if not isinstance(rows, list):
+        raise DataSourceError(f"Unexpected Binance klines payload: {rows!r}")
+    logger.info("BTC trend Binance klines returned count=%s timeframe=%s", len(rows), timeframe)
+    candles = _normalize_btc_trend_candles(rows)
+    logger.info(
+        "BTC trend normalized candles count=%s timeframe=%s",
+        len(candles),
+        timeframe,
+    )
+    if not candles:
+        first_raw = rows[0] if rows else None
+        logger.error(
+            "BTC trend normalization removed all candles timeframe=%s first_raw_kline=%r",
+            timeframe,
+            first_raw,
+        )
+        raise DataSourceError("BTC trend candles unavailable")
+    try:
+        data = _calculate_btc_trend_zones(candles)
+    except Exception:
+        logger.exception(
+            "BTC trend calculation failed timeframe=%s normalized_candles=%s",
+            timeframe,
+            len(candles),
+        )
+        raise
+    logger.info("BTC trend calculated rows count=%s timeframe=%s", len(data), timeframe)
+    latest = data[-1]
+    zone = latest["zone"]
+    return {
+        "timeframe": timeframe.upper(),
+        "signal": _btc_trend_signal(zone),
+        "zone": zone,
+        "confidence": _btc_trend_confidence(zone),
+        "latest_price": latest["close"],
+        "ema12": latest["ema12"],
+        "ema26": latest["ema26"],
+        "data": data[-BTC_TREND_CANDLE_LIMIT:],
+        "status": "ok",
+        "source": "binance",
+        "updated_at": _utc_now_iso(),
+    }
+
+
+def _normalize_btc_trend_candles(rows: Any) -> list[dict[str, Any]]:
+    candles: list[dict[str, Any]] = []
+    if not isinstance(rows, list):
+        return candles
+    for row in rows[-BTC_TREND_CANDLE_LIMIT:]:
+        if not isinstance(row, (list, tuple)) or len(row) < 6:
+            continue
+        try:
+            open_time = row[0]
+            open_price = float(row[1])
+            high = float(row[2])
+            low = float(row[3])
+            close = float(row[4])
+            volume = float(row[5])
+            candles.append({
+                "time": _format_btc_trend_time(open_time),
+                "open": round(open_price, 2),
+                "high": round(high, 2),
+                "low": round(low, 2),
+                "close": round(close, 2),
+                "volume": volume,
+            })
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "BTC trend skipped malformed Binance kline index=%s error=%s raw_kline=%r",
+                len(candles),
+                exc,
+                row,
+            )
+            continue
+    return candles
+
+
+def _calculate_btc_trend_zones(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    typical_prices = [
+        (float(row["high"]) + float(row["low"]) + float(row["close"])) / 3
+        for row in candles
+    ]
+    smoothed = _ema_series(typical_prices, 2)
+    ema12 = _ema_series(smoothed, 12)
+    ema26 = _ema_series(smoothed, 26)
+    data = []
+    for index, row in enumerate(candles):
+        zone = _btc_trend_zone(smoothed[index], ema12[index], ema26[index])
+        data.append({
+            "time": row["time"],
+            "open": row["open"],
+            "high": row["high"],
+            "low": row["low"],
+            "close": row["close"],
+            "ema12": round(ema12[index], 2),
+            "ema26": round(ema26[index], 2),
+            "zone": zone,
+        })
+    return data
+
+
+def _ema_series(values: list[float], period: int) -> list[float]:
+    if not values:
+        return []
+    multiplier = 2 / (period + 1)
+    ema = [float(values[0])]
+    for value in values[1:]:
+        ema.append((float(value) - ema[-1]) * multiplier + ema[-1])
+    return ema
+
+
+def _btc_trend_zone(smoothed_price: float, ema12: float, ema26: float) -> str:
+    if smoothed_price > ema12 and ema12 > ema26:
+        return "green"
+    if smoothed_price < ema12 and ema12 > ema26:
+        return "yellow"
+    if smoothed_price > ema12 and ema12 < ema26:
+        return "blue"
+    return "red"
+
+
+def _btc_trend_signal(zone: str) -> str:
+    return {
+        "green": "Bullish",
+        "yellow": "Weak Bull",
+        "blue": "Weak Bear",
+        "red": "Bearish",
+    }.get(zone, "Unavailable")
+
+
+def _btc_trend_confidence(zone: str) -> int:
+    return {
+        "green": 88,
+        "yellow": 62,
+        "blue": 42,
+        "red": 15,
+    }.get(zone, 0)
+
+
+def _format_btc_trend_time(value: Any) -> str:
+    try:
+        timestamp = int(value) / 1000
+    except (TypeError, ValueError):
+        return str(value)
+    return datetime.fromtimestamp(timestamp, UTC).isoformat()
 
 
 def _apply_daily_price_baseline(metric: MetricValue, settings: Settings) -> MetricValue:

@@ -9,6 +9,8 @@ import requests
 from btc_dashboard.config import Settings
 from btc_dashboard.services import (
     BTC_PRICE_TTL_SECONDS,
+    BTC_TREND_CANDLE_LIMIT,
+    BTC_TREND_ZONE_TTLS,
     FEAR_GREED_TTL_SECONDS,
     FEE_MEMPOOL_TTL_SECONDS,
     HASHRATE_TTL_SECONDS,
@@ -35,6 +37,7 @@ from btc_dashboard.services import (
     get_btc_price_result,
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
+    get_btc_trend_zone,
     get_etf_flow,
     get_fear_greed_index,
     get_fee_data,
@@ -844,6 +847,90 @@ def test_btc_price_preserves_valid_cached_value_when_binance_fails(monkeypatch, 
     assert second.change_24h_usd == 1200
     assert second.change_24h_percent == 1.3514
     assert second.is_cached is True
+
+
+def test_btc_trend_zone_calculates_cdc_action_zone(monkeypatch, tmp_path) -> None:
+    rows = []
+    for index in range(510):
+        price = 50_000 + index * 10
+        rows.append([
+            1_700_000_000_000 + index * 86_400_000,
+            str(price - 50),
+            str(price + 150),
+            str(price - 100),
+            str(price + 100),
+            "123.45",
+        ])
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert url == "https://api.binance.com/api/v3/klines"
+        assert kwargs["params"] == {"symbol": "BTCUSDT", "interval": "1d", "limit": 500}
+        assert kwargs["timeout"] == 5
+        return FakeResponse(rows)
+
+    monkeypatch.setattr("btc_dashboard.services.requests.get", fake_get)
+
+    payload = get_btc_trend_zone(_settings(tmp_path), "1d")
+
+    assert payload["timeframe"] == "1D"
+    assert payload["signal"] == "Bullish"
+    assert payload["zone"] == "green"
+    assert payload["confidence"] == 88
+    assert len(payload["data"]) == BTC_TREND_CANDLE_LIMIT
+    assert payload["latest_price"] == 55190
+    assert payload["ema12"] > payload["ema26"]
+    assert set(payload["data"][-1]) == {
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "ema12",
+        "ema26",
+        "zone",
+    }
+
+
+def test_btc_trend_zone_cache_uses_timeframe_ttl(monkeypatch, tmp_path) -> None:
+    assert BTC_TREND_ZONE_TTLS["1h"] == 5 * 60
+    assert BTC_TREND_ZONE_TTLS["4h"] == 15 * 60
+    assert BTC_TREND_ZONE_TTLS["1d"] == 60 * 60
+    assert BTC_TREND_ZONE_TTLS["1w"] == 6 * 60 * 60
+    clock = {"now": 0.0}
+    calls = {"count": 0}
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        calls["count"] += 1
+        base = 60_000 + calls["count"] * 100
+        rows = [
+            [
+                1_700_000_000_000 + index * 3_600_000,
+                base + index,
+                base + index + 2,
+                base,
+                base + index + 1,
+                10,
+            ]
+            for index in range(500)
+        ]
+        return FakeResponse(rows)
+
+    monkeypatch.setattr("btc_dashboard.services.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr("btc_dashboard.services.requests.get", fake_get)
+    settings = _settings(tmp_path)
+
+    first = get_btc_trend_zone(settings, "1h")
+    second = get_btc_trend_zone(settings, "1h")
+
+    assert first["latest_price"] == second["latest_price"]
+    assert calls["count"] == 1
+
+    clock["now"] = BTC_TREND_ZONE_TTLS["1h"] + 0.1
+
+    third = get_btc_trend_zone(settings, "1h")
+
+    assert third["latest_price"] != first["latest_price"]
+    assert calls["count"] == 2
 
 
 def test_get_hashrate_uses_node_first(monkeypatch, tmp_path) -> None:

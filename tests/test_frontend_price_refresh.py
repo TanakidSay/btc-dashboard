@@ -31,6 +31,30 @@ def test_frontend_renders_24h_usd_and_percent_change() -> None:
     assert "24h Change:" in dashboard_html
 
 
+def test_frontend_replaces_price_chart_with_btc_trend() -> None:
+    dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
+    dashboard_html = (ROOT / "btc_dashboard/templates/dashboard.html").read_text(
+        encoding="utf-8",
+    )
+
+    assert "BTC Trend" in dashboard_html
+    assert "btcTrendSignal" in dashboard_html
+    assert "btcTrendConfidence" in dashboard_html
+    assert "btcTrendTimeframe" in dashboard_html
+    assert "btcTrendFallback" in dashboard_html
+    assert 'data-timeframe="1h"' in dashboard_html
+    assert 'data-timeframe="4h"' in dashboard_html
+    assert 'data-timeframe="1d"' in dashboard_html
+    assert 'data-timeframe="1w"' in dashboard_html
+    assert "/api/btc-trend-zone?tf=" in dashboard_js
+    assert "btcTrendTimeframe = \"1d\"" in dashboard_js
+    assert "btcTrendChartData" in dashboard_js
+    assert "pointBackgroundColor: pointColors" in dashboard_js
+    assert "TradingView" not in dashboard_html
+    assert "tradingview" not in dashboard_js.lower()
+    assert "v='20260701-1'" in dashboard_html
+
+
 def test_frontend_prevents_duplicate_price_polling_intervals() -> None:
     dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
 
