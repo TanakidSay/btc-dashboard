@@ -51,6 +51,7 @@ def test_frontend_replaces_price_chart_with_btc_trend() -> None:
     assert "btcTrendTimeframe = \"1d\"" in dashboard_js
     assert "btcTrendChartData" in dashboard_js
     assert "btcTrendRibbonRows" in dashboard_js
+    assert "formatBtcTrendDateLabel(row.time)" in dashboard_js
     assert "btcTrendCurrentPricePlugin" in dashboard_js
     assert "formatBtcTrendLatest(data.latest_price)" in dashboard_js
     assert "borderWidth: 1.2" in dashboard_js
@@ -64,7 +65,7 @@ def test_frontend_replaces_price_chart_with_btc_trend() -> None:
     assert "btcTrendDatasetFromTooltipItem(item)" in dashboard_js
     assert "TradingView" not in dashboard_html
     assert "tradingview" not in dashboard_js.lower()
-    assert "v='20260701-4'" in dashboard_html
+    assert "v='20260702-1'" in dashboard_html
 
 
 def test_frontend_prevents_duplicate_price_polling_intervals() -> None:

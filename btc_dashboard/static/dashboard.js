@@ -382,8 +382,21 @@ function btcTrendZoneIcon(zone) {
     }[zone] || "";
 }
 
+function formatBtcTrendDateLabel(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    const now = new Date();
+    const sameYear = date.getUTCFullYear() === now.getUTCFullYear();
+    return date.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        ...(sameYear ? {} : { year: "numeric" }),
+    });
+}
+
 function btcTrendChartData(rows) {
-    const labels = rows.map((row) => formatChartTimeLabel(row.time));
+    const labels = rows.map((row) => formatBtcTrendDateLabel(row.time));
     const bullishRibbon = btcTrendRibbonRows(rows, true);
     const bearishRibbon = btcTrendRibbonRows(rows, false);
     return {
