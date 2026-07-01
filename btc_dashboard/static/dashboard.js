@@ -441,8 +441,8 @@ function btcTrendChartData(rows) {
                 borderColor: "#f8fafc",
                 backgroundColor: "rgba(248,250,252,0)",
                 pointRadius: 0,
-                pointHoverRadius: 3,
-                borderWidth: 1.8,
+                pointHoverRadius: 2.5,
+                borderWidth: 1.2,
                 tension: 0.16,
             },
             {
@@ -451,7 +451,7 @@ function btcTrendChartData(rows) {
                 borderColor: "#6ee7a8",
                 backgroundColor: "rgba(110,231,168,0)",
                 pointRadius: 0,
-                borderWidth: 2,
+                borderWidth: 1.35,
                 tension: 0.2,
             },
             {
@@ -460,7 +460,7 @@ function btcTrendChartData(rows) {
                 borderColor: "#f59e0b",
                 backgroundColor: "rgba(245,158,11,0)",
                 pointRadius: 0,
-                borderWidth: 2,
+                borderWidth: 1.35,
                 tension: 0.2,
             },
         ],
@@ -490,9 +490,56 @@ function formatTrendAxisUsd(value) {
     return `$${numeric.toFixed(0)}`;
 }
 
+function formatBtcTrendLatest(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? formatUsd(Math.round(numeric)) : "-";
+}
+
 function btcTrendDatasetFromTooltipItem(item) {
     return item?.chart?.data?.datasets?.[item.datasetIndex] ?? item?.dataset ?? {};
 }
+
+const btcTrendCurrentPricePlugin = {
+    id: "btcTrendCurrentPrice",
+    afterDatasetsDraw(chart) {
+        const closeDataset = chart.data.datasets.find((dataset) => dataset.label === "Close");
+        const latest = [...(closeDataset?.data ?? [])].reverse().find((value) => Number.isFinite(Number(value)));
+        const yScale = chart.scales.y;
+        const area = chart.chartArea;
+        if (!Number.isFinite(Number(latest)) || !yScale || !area) return;
+
+        const price = Number(latest);
+        const y = yScale.getPixelForValue(price);
+        if (!Number.isFinite(y) || y < area.top || y > area.bottom) return;
+
+        const { ctx } = chart;
+        const label = formatUsd(Math.round(price));
+        ctx.save();
+        ctx.setLineDash([2, 3]);
+        ctx.strokeStyle = "rgba(239,68,68,0.9)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(area.left, y);
+        ctx.lineTo(area.right, y);
+        ctx.stroke();
+
+        ctx.setLineDash([]);
+        ctx.font = "600 11px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+        const paddingX = 5;
+        const paddingY = 3;
+        const textWidth = ctx.measureText(label).width;
+        const boxWidth = textWidth + paddingX * 2;
+        const boxHeight = 20;
+        const boxX = Math.max(area.left, area.right - boxWidth + 2);
+        const boxY = Math.min(Math.max(y - boxHeight / 2, area.top), area.bottom - boxHeight);
+        ctx.fillStyle = "#ef4444";
+        ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+        ctx.fillStyle = "#ffffff";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, boxX + paddingX, boxY + boxHeight / 2);
+        ctx.restore();
+    },
+};
 
 function btcTrendChartOptions() {
     return {
@@ -506,7 +553,7 @@ function btcTrendChartOptions() {
                     ...sharedChartOptions.plugins.legend.labels,
                     filter: (item, chartData) => !chartData.datasets?.[item.datasetIndex]?.skipLegend,
                     boxWidth: 34,
-                    boxHeight: 3,
+                    boxHeight: 2,
                     usePointStyle: false,
                 },
             },
@@ -543,6 +590,7 @@ function renderBtcTrendSummary(data) {
     const signalEl = document.getElementById("btcTrendSignal");
     const confidenceEl = document.getElementById("btcTrendConfidence");
     const timeframeEl = document.getElementById("btcTrendTimeframe");
+    const latestEl = document.getElementById("btcTrendLatest");
     const fallbackEl = document.getElementById("btcTrendFallback");
     const zone = data.zone ?? "unknown";
     const signal = data.signal ?? "Unavailable";
@@ -552,6 +600,7 @@ function renderBtcTrendSummary(data) {
     }
     if (confidenceEl) confidenceEl.textContent = `Confidence: ${Number(data.confidence) || 0}%`;
     if (timeframeEl) timeframeEl.textContent = `Timeframe: ${data.timeframe ?? btcTrendTimeframe.toUpperCase()}`;
+    if (latestEl) latestEl.textContent = `Latest: ${formatBtcTrendLatest(data.latest_price)}`;
     if (fallbackEl) {
         const unavailable = !Array.isArray(data.data) || data.data.length === 0 || data.status === "error";
         fallbackEl.textContent = data.error || "Trend data temporarily unavailable.";
@@ -593,6 +642,7 @@ async function initPriceChart() {
         type: "line",
         data: btcTrendChartData(trendRows),
         options: btcTrendChartOptions(),
+        plugins: [btcTrendCurrentPricePlugin],
     });
     renderBtcTrendSummary(data);
     initBtcTrendTimeframeButtons();

@@ -41,6 +41,7 @@ def test_frontend_replaces_price_chart_with_btc_trend() -> None:
     assert "btcTrendSignal" in dashboard_html
     assert "btcTrendConfidence" in dashboard_html
     assert "btcTrendTimeframe" in dashboard_html
+    assert "btcTrendLatest" in dashboard_html
     assert "btcTrendFallback" in dashboard_html
     assert 'data-timeframe="1h"' in dashboard_html
     assert 'data-timeframe="4h"' in dashboard_html
@@ -50,6 +51,10 @@ def test_frontend_replaces_price_chart_with_btc_trend() -> None:
     assert "btcTrendTimeframe = \"1d\"" in dashboard_js
     assert "btcTrendChartData" in dashboard_js
     assert "btcTrendRibbonRows" in dashboard_js
+    assert "btcTrendCurrentPricePlugin" in dashboard_js
+    assert "formatBtcTrendLatest(data.latest_price)" in dashboard_js
+    assert "borderWidth: 1.2" in dashboard_js
+    assert "borderWidth: 1.35" in dashboard_js
     assert 'label: "Bullish EMA ribbon"' in dashboard_js
     assert 'label: "Bearish EMA ribbon"' in dashboard_js
     assert 'fill: "-1"' in dashboard_js
@@ -59,7 +64,7 @@ def test_frontend_replaces_price_chart_with_btc_trend() -> None:
     assert "btcTrendDatasetFromTooltipItem(item)" in dashboard_js
     assert "TradingView" not in dashboard_html
     assert "tradingview" not in dashboard_js.lower()
-    assert "v='20260701-3'" in dashboard_html
+    assert "v='20260701-4'" in dashboard_html
 
 
 def test_frontend_prevents_duplicate_price_polling_intervals() -> None:
