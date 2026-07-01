@@ -490,6 +490,10 @@ function formatTrendAxisUsd(value) {
     return `$${numeric.toFixed(0)}`;
 }
 
+function btcTrendDatasetFromTooltipItem(item) {
+    return item?.chart?.data?.datasets?.[item.datasetIndex] ?? item?.dataset ?? {};
+}
+
 function btcTrendChartOptions() {
     return {
         ...sharedChartOptions,
@@ -500,16 +504,19 @@ function btcTrendChartOptions() {
                 ...sharedChartOptions.plugins.legend,
                 labels: {
                     ...sharedChartOptions.plugins.legend.labels,
-                    filter: (item, chart) => !chart.data.datasets[item.datasetIndex]?.skipLegend,
+                    filter: (item, chartData) => !chartData.datasets?.[item.datasetIndex]?.skipLegend,
                     boxWidth: 34,
                     boxHeight: 3,
                     usePointStyle: false,
                 },
             },
             tooltip: {
-                filter: (item) => !item.dataset.skipTooltip,
+                filter: (item) => !btcTrendDatasetFromTooltipItem(item).skipTooltip,
                 callbacks: {
-                    label: (item) => `${item.dataset.label}: ${formatUsd(item.parsed.y)}`,
+                    label: (item) => {
+                        const dataset = btcTrendDatasetFromTooltipItem(item);
+                        return `${dataset.label ?? "Value"}: ${formatUsd(item.parsed.y)}`;
+                    },
                 },
             },
         },

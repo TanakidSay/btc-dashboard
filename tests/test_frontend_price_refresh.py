@@ -55,9 +55,11 @@ def test_frontend_replaces_price_chart_with_btc_trend() -> None:
     assert 'fill: "-1"' in dashboard_js
     assert "skipLegend: true" in dashboard_js
     assert "skipTooltip: true" in dashboard_js
+    assert "chartData.datasets?.[item.datasetIndex]" in dashboard_js
+    assert "btcTrendDatasetFromTooltipItem(item)" in dashboard_js
     assert "TradingView" not in dashboard_html
     assert "tradingview" not in dashboard_js.lower()
-    assert "v='20260701-2'" in dashboard_html
+    assert "v='20260701-3'" in dashboard_html
 
 
 def test_frontend_prevents_duplicate_price_polling_intervals() -> None:
