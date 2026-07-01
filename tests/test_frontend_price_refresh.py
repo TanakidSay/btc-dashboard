@@ -49,10 +49,15 @@ def test_frontend_replaces_price_chart_with_btc_trend() -> None:
     assert "/api/btc-trend-zone?tf=" in dashboard_js
     assert "btcTrendTimeframe = \"1d\"" in dashboard_js
     assert "btcTrendChartData" in dashboard_js
-    assert "pointBackgroundColor: pointColors" in dashboard_js
+    assert "btcTrendRibbonRows" in dashboard_js
+    assert 'label: "Bullish EMA ribbon"' in dashboard_js
+    assert 'label: "Bearish EMA ribbon"' in dashboard_js
+    assert 'fill: "-1"' in dashboard_js
+    assert "skipLegend: true" in dashboard_js
+    assert "skipTooltip: true" in dashboard_js
     assert "TradingView" not in dashboard_html
     assert "tradingview" not in dashboard_js.lower()
-    assert "v='20260701-1'" in dashboard_html
+    assert "v='20260701-2'" in dashboard_html
 
 
 def test_frontend_prevents_duplicate_price_polling_intervals() -> None:

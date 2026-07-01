@@ -384,52 +384,148 @@ function btcTrendZoneIcon(zone) {
 
 function btcTrendChartData(rows) {
     const labels = rows.map((row) => formatChartTimeLabel(row.time));
-    const pointColors = rows.map((row) => btcTrendZoneColor(row.zone));
+    const bullishRibbon = btcTrendRibbonRows(rows, true);
+    const bearishRibbon = btcTrendRibbonRows(rows, false);
     return {
         labels,
         datasets: [
             {
-                label: "BTC Close",
+                label: "Bullish EMA base",
+                data: bullishRibbon.base,
+                borderColor: "rgba(0,0,0,0)",
+                backgroundColor: "rgba(0,0,0,0)",
+                pointRadius: 0,
+                borderWidth: 0,
+                tension: 0.2,
+                skipLegend: true,
+                skipTooltip: true,
+            },
+            {
+                label: "Bullish EMA ribbon",
+                data: bullishRibbon.top,
+                borderColor: "rgba(0,0,0,0)",
+                backgroundColor: "rgba(34,197,94,0.14)",
+                pointRadius: 0,
+                borderWidth: 0,
+                tension: 0.2,
+                fill: "-1",
+                skipLegend: true,
+                skipTooltip: true,
+            },
+            {
+                label: "Bearish EMA base",
+                data: bearishRibbon.base,
+                borderColor: "rgba(0,0,0,0)",
+                backgroundColor: "rgba(0,0,0,0)",
+                pointRadius: 0,
+                borderWidth: 0,
+                tension: 0.2,
+                skipLegend: true,
+                skipTooltip: true,
+            },
+            {
+                label: "Bearish EMA ribbon",
+                data: bearishRibbon.top,
+                borderColor: "rgba(0,0,0,0)",
+                backgroundColor: "rgba(239,68,68,0.14)",
+                pointRadius: 0,
+                borderWidth: 0,
+                tension: 0.2,
+                fill: "-1",
+                skipLegend: true,
+                skipTooltip: true,
+            },
+            {
+                label: "Close",
                 data: rows.map((row) => row.close),
                 borderColor: "#f8fafc",
-                backgroundColor: "rgba(248,250,252,0.08)",
-                pointBackgroundColor: pointColors,
-                pointBorderColor: pointColors,
-                pointRadius: 2,
-                tension: 0.2,
-                fill: true,
+                backgroundColor: "rgba(248,250,252,0)",
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                borderWidth: 1.8,
+                tension: 0.16,
             },
             {
                 label: "EMA 12",
                 data: rows.map((row) => row.ema12),
-                borderColor: "#22c55e",
-                backgroundColor: "rgba(34,197,94,0.08)",
+                borderColor: "#6ee7a8",
+                backgroundColor: "rgba(110,231,168,0)",
                 pointRadius: 0,
+                borderWidth: 2,
                 tension: 0.2,
             },
             {
                 label: "EMA 26",
                 data: rows.map((row) => row.ema26),
                 borderColor: "#f59e0b",
-                backgroundColor: "rgba(245,158,11,0.08)",
+                backgroundColor: "rgba(245,158,11,0)",
                 pointRadius: 0,
+                borderWidth: 2,
                 tension: 0.2,
             },
         ],
     };
 }
 
+function btcTrendRibbonRows(rows, bullish) {
+    const base = [];
+    const top = [];
+    rows.forEach((row) => {
+        const ema12 = Number(row.ema12);
+        const ema26 = Number(row.ema26);
+        const active = Number.isFinite(ema12) && Number.isFinite(ema26) && (
+            bullish ? ema12 >= ema26 : ema12 < ema26
+        );
+        base.push(active ? Math.min(ema12, ema26) : null);
+        top.push(active ? Math.max(ema12, ema26) : null);
+    });
+    return { base, top };
+}
+
+function formatTrendAxisUsd(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return value;
+    const abs = Math.abs(numeric);
+    if (abs >= 1000) return `$${(numeric / 1000).toFixed(0)}K`;
+    return `$${numeric.toFixed(0)}`;
+}
+
 function btcTrendChartOptions() {
     return {
         ...sharedChartOptions,
+        animation: false,
+        plugins: {
+            ...sharedChartOptions.plugins,
+            legend: {
+                ...sharedChartOptions.plugins.legend,
+                labels: {
+                    ...sharedChartOptions.plugins.legend.labels,
+                    filter: (item, chart) => !chart.data.datasets[item.datasetIndex]?.skipLegend,
+                    boxWidth: 34,
+                    boxHeight: 3,
+                    usePointStyle: false,
+                },
+            },
+            tooltip: {
+                filter: (item) => !item.dataset.skipTooltip,
+                callbacks: {
+                    label: (item) => `${item.dataset.label}: ${formatUsd(item.parsed.y)}`,
+                },
+            },
+        },
         scales: {
             ...sharedChartOptions.scales,
+            x: {
+                ...sharedChartOptions.scales.x,
+                grid: { color: "rgba(75, 85, 99, 0.22)" },
+            },
             y: {
                 ...sharedChartOptions.scales.y,
                 beginAtZero: false,
+                grid: { color: "rgba(75, 85, 99, 0.24)" },
                 ticks: {
                     ...sharedChartOptions.scales.y.ticks,
-                    callback: (value) => formatCompactUsd(value),
+                    callback: (value) => formatTrendAxisUsd(value),
                 },
             },
         },
