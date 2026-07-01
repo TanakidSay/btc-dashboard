@@ -933,6 +933,50 @@ def test_btc_trend_zone_cache_uses_timeframe_ttl(monkeypatch, tmp_path) -> None:
     assert calls["count"] == 2
 
 
+def test_btc_trend_zone_falls_back_to_kraken_when_binance_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    calls = []
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        calls.append(url)
+        if "binance.com" in url:
+            return FakeResponse(status_code=451)
+        if "api.kraken.com" in url:
+            rows = [
+                [
+                    1_700_000_000 + index * 86_400,
+                    str(50_000 + index),
+                    str(50_200 + index),
+                    str(49_900 + index),
+                    str(50_100 + index),
+                    "50050.0",
+                    "12.5",
+                    100,
+                ]
+                for index in range(500)
+            ]
+            return FakeResponse({"error": [], "result": {"XXBTZUSD": rows, "last": 0}})
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr("btc_dashboard.services.requests.get", fake_get)
+
+    payload = get_btc_trend_zone(_settings(tmp_path), "1d")
+
+    assert calls == [
+        "https://api.binance.com/api/v3/klines",
+        "https://api.kraken.com/0/public/OHLC",
+    ]
+    assert payload["status"] == "ok"
+    assert payload["source"] == "kraken"
+    assert payload["timeframe"] == "1D"
+    assert len(payload["data"]) == 500
+    assert payload["latest_price"] == 50599.0
+    assert payload["ema12"] is not None
+    assert payload["ema26"] is not None
+
+
 def test_get_hashrate_uses_node_first(monkeypatch, tmp_path) -> None:
     post_calls = []
 

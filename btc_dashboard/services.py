@@ -61,6 +61,12 @@ BTC_TREND_TIMEFRAMES = {
     "1d": "1d",
     "1w": "1w",
 }
+KRAKEN_BTC_TREND_INTERVALS = {
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+    "1w": 10080,
+}
 BTC_TREND_ZONE_TTLS = {
     "1h": 5 * 60,
     "4h": 15 * 60,
@@ -81,6 +87,7 @@ BITNODES_LATEST_SNAPSHOT_URL = "https://bitnodes.io/api/v1/snapshots/latest/"
 MEMPOOL_RECENT_TX_URL = "https://mempool.space/api/mempool/recent"
 BINANCE_BTC_TICKER_URL = "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
 BINANCE_BTC_KLINES_URL = "https://api.binance.com/api/v3/klines"
+KRAKEN_BTC_OHLC_URL = "https://api.kraken.com/0/public/OHLC"
 COINGLASS_BTC_ETF_FLOW_URL = "https://open-api-v4.coinglass.com/api/etf/bitcoin/flow-history"
 SOSOVALUE_BTC_ETF_FLOW_URL = "https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart"
 FARSIDE_BTC_ETF_FLOW_URL = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
@@ -1620,7 +1627,7 @@ def get_btc_trend_zone(settings: Settings, timeframe: str = "1d") -> dict[str, A
     return _cached_for(
         f"btc_trend_zone_{tf}",
         BTC_TREND_ZONE_TTLS[tf],
-        lambda: _get_btc_trend_zone_from_binance(settings, tf),
+        lambda: _get_btc_trend_zone_with_fallbacks(settings, tf),
         f"BTC trend zone refreshed timeframe={tf}",
     )
 
@@ -1628,6 +1635,25 @@ def get_btc_trend_zone(settings: Settings, timeframe: str = "1d") -> dict[str, A
 def _normalize_btc_trend_timeframe(timeframe: str | None) -> str:
     tf = str(timeframe or "1d").lower()
     return tf if tf in BTC_TREND_TIMEFRAMES else "1d"
+
+
+def _get_btc_trend_zone_with_fallbacks(settings: Settings, timeframe: str) -> dict[str, Any]:
+    providers = (
+        _get_btc_trend_zone_from_binance,
+        _get_btc_trend_zone_from_kraken,
+    )
+    last_error: Exception | None = None
+    for provider in providers:
+        try:
+            return provider(settings, timeframe)
+        except Exception as exc:
+            last_error = exc
+            logger.exception(
+                "BTC trend provider failed provider=%s timeframe=%s",
+                provider.__name__,
+                timeframe,
+            )
+    raise DataSourceError(f"BTC trend sources unavailable: {last_error}")
 
 
 def _get_btc_trend_zone_from_binance(settings: Settings, timeframe: str) -> dict[str, Any]:
@@ -1677,6 +1703,62 @@ def _get_btc_trend_zone_from_binance(settings: Settings, timeframe: str) -> dict
         )
         raise
     logger.info("BTC trend calculated rows count=%s timeframe=%s", len(data), timeframe)
+    return _build_btc_trend_payload(timeframe, "binance", data)
+
+
+def _get_btc_trend_zone_from_kraken(settings: Settings, timeframe: str) -> dict[str, Any]:
+    params = {
+        "pair": "XBTUSD",
+        "interval": KRAKEN_BTC_TREND_INTERVALS[timeframe],
+    }
+    logger.info("BTC trend Kraken request url=%s params=%s", KRAKEN_BTC_OHLC_URL, params)
+    response = requests.get(
+        KRAKEN_BTC_OHLC_URL,
+        headers=API_HEADERS,
+        params=params,
+        timeout=settings.request_timeout,
+    )
+    logger.info(
+        "BTC trend Kraken response url=%s status_code=%s",
+        getattr(response, "url", KRAKEN_BTC_OHLC_URL),
+        getattr(response, "status_code", "unknown"),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    rows = _kraken_ohlc_rows(payload)
+    logger.info("BTC trend Kraken klines returned count=%s timeframe=%s", len(rows), timeframe)
+    candles = _normalize_kraken_btc_trend_candles(rows)
+    logger.info(
+        "BTC trend Kraken normalized candles count=%s timeframe=%s",
+        len(candles),
+        timeframe,
+    )
+    if not candles:
+        first_raw = rows[0] if rows else None
+        logger.error(
+            "BTC trend Kraken normalization removed all candles timeframe=%s first_raw_kline=%r",
+            timeframe,
+            first_raw,
+        )
+        raise DataSourceError("BTC trend Kraken candles unavailable")
+    try:
+        data = _calculate_btc_trend_zones(candles)
+    except Exception:
+        logger.exception(
+            "BTC trend Kraken calculation failed timeframe=%s normalized_candles=%s",
+            timeframe,
+            len(candles),
+        )
+        raise
+    logger.info("BTC trend Kraken calculated rows count=%s timeframe=%s", len(data), timeframe)
+    return _build_btc_trend_payload(timeframe, "kraken", data)
+
+
+def _build_btc_trend_payload(
+    timeframe: str,
+    source: str,
+    data: list[dict[str, Any]],
+) -> dict[str, Any]:
     latest = data[-1]
     zone = latest["zone"]
     return {
@@ -1689,7 +1771,7 @@ def _get_btc_trend_zone_from_binance(settings: Settings, timeframe: str) -> dict
         "ema26": latest["ema26"],
         "data": data[-BTC_TREND_CANDLE_LIMIT:],
         "status": "ok",
-        "source": "binance",
+        "source": source,
         "updated_at": _utc_now_iso(),
     }
 
@@ -1719,6 +1801,56 @@ def _normalize_btc_trend_candles(rows: Any) -> list[dict[str, Any]]:
         except (TypeError, ValueError) as exc:
             logger.warning(
                 "BTC trend skipped malformed Binance kline index=%s error=%s raw_kline=%r",
+                len(candles),
+                exc,
+                row,
+            )
+            continue
+    return candles
+
+
+def _kraken_ohlc_rows(payload: Any) -> list[Any]:
+    if not isinstance(payload, dict):
+        raise DataSourceError(f"Unexpected Kraken OHLC payload: {payload!r}")
+    errors = payload.get("error") or []
+    if errors:
+        raise DataSourceError(f"Kraken OHLC error: {errors!r}")
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise DataSourceError(f"Unexpected Kraken OHLC result: {payload!r}")
+    for key, value in result.items():
+        if key == "last":
+            continue
+        if isinstance(value, list):
+            return value[-BTC_TREND_CANDLE_LIMIT:]
+    raise DataSourceError(f"Kraken OHLC rows missing: {payload!r}")
+
+
+def _normalize_kraken_btc_trend_candles(rows: Any) -> list[dict[str, Any]]:
+    candles: list[dict[str, Any]] = []
+    if not isinstance(rows, list):
+        return candles
+    for row in rows[-BTC_TREND_CANDLE_LIMIT:]:
+        if not isinstance(row, (list, tuple)) or len(row) < 7:
+            continue
+        try:
+            open_time_seconds = int(row[0])
+            open_price = float(row[1])
+            high = float(row[2])
+            low = float(row[3])
+            close = float(row[4])
+            volume = float(row[6])
+            candles.append({
+                "time": datetime.fromtimestamp(open_time_seconds, UTC).isoformat(),
+                "open": round(open_price, 2),
+                "high": round(high, 2),
+                "low": round(low, 2),
+                "close": round(close, 2),
+                "volume": volume,
+            })
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "BTC trend skipped malformed Kraken kline index=%s error=%s raw_kline=%r",
                 len(candles),
                 exc,
                 row,
