@@ -19,6 +19,7 @@ from .services import (
     get_btc_treasury_holdings,
     get_btc_trend_zone,
     get_current_block_height,
+    get_daily_analytics,
     get_etf_flow,
     get_fear_greed_index,
     get_mvrv_history,
@@ -726,6 +727,13 @@ def api_analytics_event():
     return jsonify({"ok": recorded}), status
 
 
+@api.route("/event/<event_name>", methods=["POST"])
+def api_event_path(event_name: str):
+    recorded = _record_dashboard_event(event_name)
+    status = 200 if recorded else 400
+    return jsonify({"ok": recorded}), status
+
+
 @api.route("/api/ownership")
 @api.route("/api/supply-ownership")
 def api_supply_ownership():
@@ -806,6 +814,15 @@ def api_viewer_analytics():
             "privacy": "Aggregate only; IP addresses are not stored.",
             "error": str(exc),
         })
+
+
+@api.route("/api/analytics/daily")
+def api_analytics_daily():
+    try:
+        return jsonify(get_daily_analytics(_settings(), int(request.args.get("days", "7"))))
+    except Exception as exc:
+        current_app.logger.exception("/api/analytics/daily failed: %s", exc)
+        return jsonify([])
 
 
 @api.route("/api/alert")

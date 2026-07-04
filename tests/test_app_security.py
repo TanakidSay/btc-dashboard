@@ -478,6 +478,43 @@ def test_viewer_analytics_endpoint_reports_aggregate_sources(monkeypatch, tmp_pa
     assert "203.0.113" not in json.dumps(body)
 
 
+def test_daily_analytics_endpoint_reports_btc_trend_events(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
+    app = create_app(_settings(tmp_path))
+    client = app.test_client()
+
+    home_response = client.get(
+        "/",
+        headers={
+            "User-Agent": "Mozilla/5.0 Chrome/124",
+            "CF-Connecting-IP": "203.0.113.40",
+            "CF-IPCountry": "TH",
+        },
+    )
+    event_response = client.post(
+        "/event/btc_trend_open",
+        headers={
+            "User-Agent": "Mozilla/5.0 Chrome/124",
+            "CF-Connecting-IP": "203.0.113.41",
+            "CF-IPCountry": "TH",
+        },
+    )
+    invalid_response = client.post("/event/not_allowed")
+    daily_response = client.get("/api/analytics/daily")
+
+    assert home_response.status_code == 200
+    assert event_response.status_code == 200
+    assert event_response.get_json() == {"ok": True}
+    assert invalid_response.status_code == 400
+    assert daily_response.status_code == 200
+    body = daily_response.get_json()
+    assert len(body) == 7
+    assert body[-1]["home_views"] == 1
+    assert body[-1]["btc_trend_opens"] == 1
+    assert body[-1]["total_events"] == 2
+    assert "203.0.113" not in json.dumps(body)
+
+
 def test_index_records_utm_source_when_referrer_is_missing(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("btc_dashboard.app.warm_local_cache", lambda settings: None)
     app = create_app(_settings(tmp_path))
@@ -993,7 +1030,7 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Security" in html
     assert "networkSecuritySummary" in html
     assert "dashboard.js" in html
-    assert "20260701-2" in html
+    assert "20260702-1" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
     assert 'rel="canonical"' in html
     assert 'property="og:title"' in html

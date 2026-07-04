@@ -317,6 +317,26 @@ DEFAULT_VIEWER_ANALYTICS = {
     "recent_fingerprints": {},
     "visitor_events": [],
 }
+ALLOWED_ANALYTICS_EVENTS = {
+    "advanced_network_open",
+    "advanced_network_close",
+    "ownership_details_open",
+    "ownership_details_close",
+    "etf_history_open",
+    "etf_history_close",
+    "latest_data_open",
+    "latest_data_close",
+    "site_stats_open",
+    "site_stats_close",
+    "mvrv_card_view",
+    "mvrv_chart_open",
+    "mvrv_chart_close",
+    "btc_trend_card_view",
+    "btc_trend_open",
+    "btc_trend_close",
+}
+BTC_TREND_VIEW_PATHS = {"/event/btc_trend_card_view"}
+BTC_TREND_OPEN_PATHS = {"/event/btc_trend_open"}
 
 
 class DataSourceError(RuntimeError):
@@ -435,6 +455,16 @@ def get_viewer_analytics(settings: Settings) -> dict[str, Any]:
     return _public_viewer_analytics(analytics)
 
 
+def get_daily_analytics(settings: Settings, days: int = 7) -> list[dict[str, Any]]:
+    days = min(max(int(days or 7), 1), 31)
+    with _viewer_lock:
+        analytics = _load_viewer_analytics(settings.viewer_analytics_path)
+        today = _viewer_today_utc()
+        _prune_viewer_events(analytics, today)
+        _save_viewer_analytics(settings.viewer_analytics_path, analytics)
+    return _daily_analytics_rows(analytics, today, days)
+
+
 def record_analytics_event(
     settings: Settings,
     event_name: str,
@@ -445,22 +475,7 @@ def record_analytics_event(
     accept_language: str | None = None,
     visitor_key: str | None = None,
 ) -> bool:
-    allowed_events = {
-        "advanced_network_open",
-        "advanced_network_close",
-        "ownership_details_open",
-        "ownership_details_close",
-        "etf_history_open",
-        "etf_history_close",
-        "latest_data_open",
-        "latest_data_close",
-        "site_stats_open",
-        "site_stats_close",
-        "mvrv_card_view",
-        "mvrv_chart_open",
-        "mvrv_chart_close",
-    }
-    if event_name not in allowed_events:
+    if event_name not in ALLOWED_ANALYTICS_EVENTS:
         return False
     event_path = f"/event/{event_name}"
     visitor_key = visitor_key or _viewer_key(
@@ -902,6 +917,54 @@ def _viewer_retention_metrics(analytics: dict[str, Any]) -> dict[str, Any]:
         "returning_visitors": returning_visitors,
         "returning_rate": f"{returning_rate:.1f}%",
     }
+
+
+def _daily_analytics_rows(
+    analytics: dict[str, Any],
+    today: date,
+    days: int,
+) -> list[dict[str, Any]]:
+    start = today - timedelta(days=days - 1)
+    dates = [start + timedelta(days=offset) for offset in range(days)]
+    rows = {
+        day: {
+            "date": day.isoformat(),
+            "home_views": 0,
+            "unique_visitors": 0,
+            "returning_visitors": 0,
+            "total_events": 0,
+            "btc_trend_views": 0,
+            "btc_trend_opens": 0,
+        }
+        for day in dates
+    }
+    visitors_by_day: dict[date, set[str]] = {day: set() for day in dates}
+
+    for event in _viewer_metric_events(analytics):
+        event_date = _viewer_event_date(event)
+        if event_date is None or event_date < start or event_date > today:
+            continue
+        path = _viewer_path(str(event.get("path") or "/"))
+        rows[event_date]["total_events"] += 1
+        if path == "/":
+            rows[event_date]["home_views"] += 1
+        if path in BTC_TREND_VIEW_PATHS:
+            rows[event_date]["btc_trend_views"] += 1
+        if path in BTC_TREND_OPEN_PATHS:
+            rows[event_date]["btc_trend_opens"] += 1
+
+        visitor = _viewer_metric_event_key(event)
+        if visitor:
+            visitors_by_day[event_date].add(visitor)
+
+    previous_visitors: set[str] = set()
+    for day in dates:
+        day_visitors = visitors_by_day[day]
+        rows[day]["unique_visitors"] = len(day_visitors)
+        rows[day]["returning_visitors"] = len(day_visitors & previous_visitors)
+        previous_visitors.update(day_visitors)
+
+    return [rows[day] for day in dates]
 
 
 def _viewer_metric_events(analytics: dict[str, Any]) -> list[dict[str, Any]]:

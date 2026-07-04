@@ -38,6 +38,7 @@ from btc_dashboard.services import (
     get_btc_supply_ownership,
     get_btc_treasury_holdings,
     get_btc_trend_zone,
+    get_daily_analytics,
     get_etf_flow,
     get_fear_greed_index,
     get_fee_data,
@@ -441,6 +442,56 @@ def test_viewer_analytics_reports_unique_today_unique_7d_and_returning_rate(
     assert len(stored["visitor_events"]) == 6
     assert "visitor_key" in stored["visitor_events"][0]
     assert "203.0.113" not in json.dumps(stored)
+
+
+def test_daily_analytics_aggregates_home_and_btc_trend_events(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = _settings(tmp_path)
+    base = datetime(2026, 7, 4, 12, 0, tzinfo=UTC)
+
+    def set_now(days_ago: int, seconds: int = 0) -> None:
+        current = base - timedelta(days=days_ago) + timedelta(seconds=seconds)
+        monkeypatch.setattr("btc_dashboard.services.time.time", lambda: current.timestamp())
+
+    set_now(1)
+    record_view(settings, "203.0.113.10", "Chrome", None, "/", "TH")
+    set_now(1, 61)
+    record_view(settings, "203.0.113.11", "Firefox", None, "/", "TH")
+    set_now(1, 122)
+    assert record_analytics_event(settings, "btc_trend_card_view", "203.0.113.12", "Safari")
+
+    set_now(0)
+    record_view(settings, "203.0.113.10", "Chrome", None, "/", "TH")
+    set_now(0, 61)
+    assert record_analytics_event(settings, "btc_trend_card_view", "203.0.113.13", "Edge")
+    set_now(0, 122)
+    assert record_analytics_event(settings, "btc_trend_open", "203.0.113.14", "Chrome")
+    set_now(0, 180)
+
+    rows = get_daily_analytics(settings)
+
+    assert len(rows) == 7
+    assert rows[-2] == {
+        "date": "2026-07-03",
+        "home_views": 2,
+        "unique_visitors": 3,
+        "returning_visitors": 0,
+        "total_events": 3,
+        "btc_trend_views": 1,
+        "btc_trend_opens": 0,
+    }
+    assert rows[-1] == {
+        "date": "2026-07-04",
+        "home_views": 1,
+        "unique_visitors": 3,
+        "returning_visitors": 1,
+        "total_events": 3,
+        "btc_trend_views": 1,
+        "btc_trend_opens": 1,
+    }
+    assert "203.0.113" not in json.dumps(rows)
 
 
 def test_viewer_analytics_legacy_recent_rows_do_not_collapse_to_one_visitor(
