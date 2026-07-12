@@ -5,6 +5,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_trendsurfer_sponsor_links_to_sales_landing() -> None:
+    dashboard_html = (ROOT / "btc_dashboard/templates/dashboard.html").read_text(
+        encoding="utf-8",
+    )
+    poster = ROOT / "btc_dashboard/static/trendsurfer-poster.png"
+
+    assert "https://trendsurfer.btcwindow.uk/trendsurfer" in dashboard_html
+    assert 'aria-label="Read more about TrendSurfer"' in dashboard_html
+    assert 'target="_blank"' in dashboard_html
+    assert 'rel="noopener noreferrer"' in dashboard_html
+    assert "trendsurfer-poster.png" in dashboard_html
+    assert poster.is_file()
+
+
 def test_frontend_has_five_second_price_card_polling() -> None:
     dashboard_js = (ROOT / "btc_dashboard/static/dashboard.js").read_text(encoding="utf-8")
 
