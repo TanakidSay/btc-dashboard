@@ -87,21 +87,6 @@
         </div>
     </header>
 
-    <section class="mb-6 overflow-hidden rounded-lg border border-amber-500/25 bg-gray-900 shadow" aria-labelledby="trendsurfer-sponsor-title">
-        <div class="grid items-center gap-5 p-4 sm:p-5 lg:grid-cols-[120px_1fr_auto]">
-            <a class="block overflow-hidden rounded-lg border border-amber-500/20" href="https://trendsurfer.btcwindow.uk/trendsurfer" target="_blank" rel="noopener noreferrer" aria-label="Read more about TrendSurfer">
-                <img class="aspect-[4/5] w-full object-cover" src="{{ url_for('static', filename='trendsurfer-poster.png') }}" width="400" height="500" loading="lazy" decoding="async" alt="TrendSurfer professional spot investment software">
-            </a>
-            <div>
-                <p class="text-xs font-semibold uppercase tracking-wide text-amber-400">Featured software</p>
-                <h2 id="trendsurfer-sponsor-title" class="mt-1 text-xl font-semibold text-white sm:text-2xl">TrendSurfer</h2>
-                <p class="mt-1 text-sm leading-6 text-gray-300">Professional automated investment software for patient Binance Spot investors.</p>
-                <p class="mt-2 text-xs text-gray-500">Trade Less. Grow More.</p>
-            </div>
-            <a class="inline-flex min-h-10 items-center justify-center rounded-md bg-amber-400 px-4 py-2 text-sm font-semibold text-gray-950 transition hover:bg-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-300 focus:ring-offset-2 focus:ring-offset-gray-900" href="https://trendsurfer.btcwindow.uk/trendsurfer" target="_blank" rel="noopener noreferrer">Read More</a>
-        </div>
-    </section>
-
     <section class="mb-6" aria-label="Market pulse">
         <div class="mb-3 flex items-end justify-between gap-3">
             <div>
@@ -563,6 +548,19 @@
             </button>
         </div>
     </aside>
+
+    <section class="ml-auto mt-6 w-full max-w-2xl rounded-lg border border-gray-800 bg-gray-950/70" aria-labelledby="trendsurfer-title">
+        <div class="flex items-center gap-3 p-2.5 sm:p-3">
+            <a class="block h-20 w-14 shrink-0 overflow-hidden rounded border border-gray-800 bg-gray-900 sm:h-24 sm:w-16" href="https://trendsurfer.btcwindow.uk/trendsurfer" target="_blank" rel="noopener noreferrer" aria-label="Read more about TrendSurfer">
+                <img class="h-full w-full object-contain" src="{{ url_for('static', filename='trendsurfer-poster.png') }}" width="864" height="1152" loading="lazy" decoding="async" alt="TrendSurfer professional spot investment software">
+            </a>
+            <div class="min-w-0 flex-1">
+                <h2 id="trendsurfer-title" class="text-sm font-semibold text-gray-200">TrendSurfer</h2>
+                <p class="mt-0.5 text-xs leading-5 text-gray-500">Trade Less. Grow More.</p>
+            </div>
+            <a class="shrink-0 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs font-semibold text-gray-300 transition hover:border-amber-400 hover:text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400" href="https://trendsurfer.btcwindow.uk/trendsurfer" target="_blank" rel="noopener noreferrer">Read More</a>
+        </div>
+    </section>
 
     <footer class="mt-8 border-t border-gray-800 pt-5 text-center text-sm text-gray-500">
         <p class="font-medium text-gray-300">BTC Window — Built for Generational Wealth.</p>
