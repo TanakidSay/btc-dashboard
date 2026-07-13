@@ -16,6 +16,12 @@ def test_trendsurfer_sponsor_links_to_sales_landing() -> None:
     assert 'target="_blank"' in dashboard_html
     assert 'rel="noopener noreferrer"' in dashboard_html
     assert "trendsurfer-poster.jpg" in dashboard_html
+
+    sponsor_start = dashboard_html.index('aria-labelledby="trendsurfer-title"')
+    donation_start = dashboard_html.index('aria-label="Donation support"')
+    assert sponsor_start < donation_start
+    assert "max-w-5xl" in dashboard_html
+    assert "sm:h-44 sm:w-32" in dashboard_html
     assert poster.is_file()
 
 
