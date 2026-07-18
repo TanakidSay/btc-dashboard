@@ -1030,7 +1030,7 @@ def test_frontend_renders_ownership_categories_and_insights() -> None:
     assert "Security" in html
     assert "networkSecuritySummary" in html
     assert "dashboard.js" in html
-    assert "20260702-1" in html
+    assert "20260718-1" in html
     assert "BTC Window | Bitcoin Fees, ETF Flow & Network Health" in html
     assert 'rel="canonical"' in html
     assert 'property="og:title"' in html

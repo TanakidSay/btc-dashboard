@@ -31,6 +31,7 @@ def test_frontend_has_five_second_price_card_polling() -> None:
     assert 'fetchJson("/api/price")' in dashboard_js
     assert 'startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000)' in dashboard_js
     assert 'startRefreshJob("btc-price-chart", refreshPriceChart, 60000)' in dashboard_js
+    assert "async function initDashboard() {\n    updateBtcPriceCard();" in dashboard_js
     assert "document.addEventListener(\"DOMContentLoaded\"" in dashboard_js
     assert "refreshBtcPriceMetrics" not in dashboard_js
 
@@ -85,7 +86,7 @@ def test_frontend_replaces_price_chart_with_btc_trend() -> None:
     assert "btcTrendDatasetFromTooltipItem(item)" in dashboard_js
     assert "TradingView" not in dashboard_html
     assert "tradingview" not in dashboard_js.lower()
-    assert "v='20260702-1'" in dashboard_html
+    assert "v='20260718-1'" in dashboard_html
 
 
 def test_frontend_prevents_duplicate_price_polling_intervals() -> None:

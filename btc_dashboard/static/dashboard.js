@@ -1577,6 +1577,7 @@ function startRefreshJob(name, task, intervalMs) {
 }
 
 async function initDashboard() {
+    updateBtcPriceCard();
     await Promise.allSettled([
         initPriceChart(),
         initFeeChart(),
@@ -1594,7 +1595,6 @@ async function initDashboard() {
         initMvrvSection(),
         initAccordionPanels(),
     ]);
-    updateBtcPriceCard();
     startRefreshJob("btc-price-card", refreshBtcPriceCard, 5000);
     startRefreshJob("btc-price-chart", refreshPriceChart, 60000);
     startRefreshJob("mempool-metrics", refreshMempoolMetrics, 30000);
